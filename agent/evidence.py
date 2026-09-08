@@ -96,29 +96,58 @@ DESIGN_TOOL = {
 POWER_TOOL = {
     "name": "grant_power",
     "description": (
-        "Give a player an ability, or take one back. These are things no command can "
-        "express: flight without creative mode (they keep their inventory, hunger and "
-        "damage), a fireball thrown from an empty hand, immunity to the fire they make.\n"
-        "Use this, not creative mode and a stack of fire charges, when someone asks to fly "
-        "or to throw fire or to be made powerful. Creative is not a superpower, it is a "
-        "different game.\n"
-        "Powers: flight, fireball, great_fireball, wind_blast, fire_immunity, "
-        "fall_immunity, strength, speed, jump, regeneration, resistance, night_vision, "
-        "water_breathing, invisibility, glow, flame_trail, cloud_trail, spark_trail.\n"
-        "Combine them freely: flight + fireball + fire_immunity + flame_trail is a flying "
-        "fire-throwing figure. `duration` is in ticks (20 a second); leave it out to hold "
-        "until taken away. Right-clicking with an EMPTY HAND is what throws a projectile, "
-        "so tell the player that."
+        "Invent an ability and give it to a player. There is no list of powers to pick "
+        "from: you write what the power DOES, and the server binds it to a gesture.\n"
+        "An ability is three things, and you may use any combination:\n"
+        "  scripts  - commands to run when the player does something. The triggers are "
+        "on_use (either mouse button), on_sneak, on_move, on_attack, on_damaged, and "
+        "every (with `every` set to a tick interval). Commands run anchored to the "
+        "player, so `~ ~ ~` is where they stand and `^ ^ ^5` is five blocks ahead of "
+        "where they are LOOKING. That is how you aim anything.\n"
+        "  switches - the things a command cannot say: fly (flight without creative "
+        "mode, so they keep inventory, hunger and damage), no_fall, glow, "
+        "immune:<cause> (fire, lava, explosion, drowning, or all), walk_speed:<n> "
+        "(0.2 is normal, 0.6 is very fast).\n"
+        "  projectile - an entity thrown along the line of sight on use, aimed where "
+        "they look, which a summon command cannot do. Any entity id: small_fireball, "
+        "fireball, wind_charge, arrow, snowball, trident, breeze_wind_charge, even a "
+        "tnt or a cow. `speed` sets how hard it is thrown, default 1.6.\n"
+        "Examples of the shape, not a menu:\n"
+        "  a web shooter -> scripts {on_use: [\"setblock ^ ^ ^4 cobweb\"]}\n"
+        "  frozen wake -> scripts {on_move: [\"setblock ~ ~-1 ~ packed_ice\"]}\n"
+        "  thunder caller -> scripts {on_sneak: [\"summon lightning_bolt ^ ^ ^12\"]}\n"
+        "  a leap -> scripts {on_sneak: [\"effect give @s jump_boost 1 40 true\", "
+        "\"execute at @s run tp @s ~ ~1 ~\"]}, switches [no_fall]\n"
+        "  meteor storm -> every 10, scripts {every: [\"summon fireball ~ ~30 ~ "
+        "{power:[0.0,-1.0,0.0]}\"]}\n"
+        "Prefer this over creative mode and a stack of items. Creative is not a "
+        "superpower, it is a different game, and a fire charge you have to throw by hand "
+        "is not what anyone means by throwing fire.\n"
+        "`name` is what the power is called, so it can be taken back by name. `duration` "
+        "is in ticks (20 a second); leave it out to hold until taken away. `cooldown_ms` "
+        "throttles a trigger that would otherwise fire many times a second; on_move and "
+        "on_use fire constantly, so set it unless you want a dense trail. To take an "
+        "ability away, set revoke with the name, or revoke with no name for all of them.\n"
+        "Tell the player which gesture works it."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "player": {"type": "string"},
-            "powers": {"type": "array", "items": {"type": "string"}},
+            "name": {"type": "string"},
+            "scripts": {
+                "type": "object",
+                "additionalProperties": {"type": "array", "items": {"type": "string"}},
+            },
+            "switches": {"type": "array", "items": {"type": "string"}},
+            "projectile": {"type": "string"},
+            "speed": {"type": "number"},
+            "every": {"type": "integer", "minimum": 1},
             "duration": {"type": "integer", "minimum": 1},
+            "cooldown_ms": {"type": "integer", "minimum": 0},
             "revoke": {"type": "boolean"},
         },
-        "required": ["player", "powers"],
+        "required": ["player", "name"],
         "additionalProperties": False,
     },
 }

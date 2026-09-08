@@ -142,24 +142,34 @@ def to_voxels(result: dict) -> dict:
     return out
 
 
-#: What the god may give a player. The plugin is authoritative; this is the vocabulary the
-#: model is shown, so an invented power is refused with a list of the real ones.
-POWERS = ("flight", "fireball", "great_fireball", "wind_blast", "fire_immunity",
-          "fall_immunity", "strength", "speed", "jump", "regeneration", "resistance",
-          "night_vision", "water_breathing", "invisibility", "glow", "flame_trail",
-          "cloud_trail", "spark_trail")
+#: The triggers and switches an ability may be built from. The plugin is authoritative;
+#: this is the vocabulary the model is shown, so an invented word comes back named.
+TRIGGERS = ("on_use", "on_sneak", "on_move", "on_attack", "on_damaged", "every")
+SWITCHES = ("fly", "no_fall", "glow", "immune:", "walk_speed:")
 
 
-async def grant_power(player: str, powers, url: str = DEFAULT_URL, duration: int = 0,
-                      revoke: bool = False, timeout: float = 20.0) -> dict:
-    """Give or take powers that no command can express.
+async def grant_power(player: str, name: str, url: str = DEFAULT_URL, *,
+                      scripts: dict | None = None, switches=(), projectile: str | None = None,
+                      speed: float = 0, every: int = 0, duration: int = 0,
+                      cooldown_ms: int = 200, revoke: bool = False,
+                      timeout: float = 20.0) -> dict:
+    """Give or take an ability the god has invented.
 
-    Flight without creative mode, a fireball from an empty hand, immunity to the fire you
-    make. ``duration`` is in ticks; zero holds until taken away.
+    An ability is commands bound to a gesture plus a few switches no command can express.
+    The scripted commands pass the server's own gate, exactly as a direct command does, so
+    binding one to a right-click is not a way around what may be run. ``duration`` is in
+    ticks; zero holds until taken away.
     """
+    if revoke:
+        return await request_rpc(url, {
+            "rpc": "revoke_power", "player": player, "name": name or None,
+        }, "power_result", timeout)
     return await request_rpc(url, {
-        "rpc": "revoke_power" if revoke else "grant_power",
-        "player": player, "powers": list(powers), "duration": int(duration),
+        "rpc": "grant_power", "player": player, "name": name,
+        "scripts": {str(k): [str(c) for c in v] for k, v in (scripts or {}).items()},
+        "switches": [str(s) for s in switches],
+        "projectile": projectile, "speed": float(speed),
+        "every": int(every), "duration": int(duration), "cooldown_ms": int(cooldown_ms),
     }, "power_result", timeout)
 
 

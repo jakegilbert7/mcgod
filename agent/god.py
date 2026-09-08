@@ -2697,26 +2697,42 @@ thinking=thinking_for(VISION_MODEL),
         return result
 
     async def grant_powers(self, request: dict, actor: str | None = None) -> dict:
-        """Give or take abilities. The plugin holds them and decides what exists."""
-        from scan import POWERS, grant_power
+        """Give or take an ability the model has just invented.
+
+        Nothing here decides what a power may be. The vocabulary it is built from lives in
+        the plugin, its commands pass the plugin's own gate, and anything unrecognised comes
+        back named so the next draft can use a word that exists.
+        """
+        from scan import grant_power
 
         player = str(request.get("player") or self.names.get(actor) or "").strip()
-        powers = [str(p).lower().strip() for p in (request.get("powers") or [])]
-        unknown = [p for p in powers if p not in POWERS]
+        name = str(request.get("name") or "power").strip()
         if not player:
             return {"error": "no player named"}
+        scripts = request.get("scripts") or {}
+        if not isinstance(scripts, dict):
+            scripts = {}
         try:
-            result = await grant_power(player, powers, URL,
-                                       duration=int(request.get("duration") or 0),
-                                       revoke=bool(request.get("revoke")))
+            result = await grant_power(
+                player, name, URL,
+                scripts=scripts,
+                switches=request.get("switches") or [],
+                projectile=request.get("projectile") or None,
+                speed=float(request.get("speed") or 0),
+                every=int(request.get("every") or 0),
+                duration=int(request.get("duration") or 0),
+                cooldown_ms=int(request.get("cooldown_ms") or 200),
+                revoke=bool(request.get("revoke")))
         except Exception as error:  # noqa: BLE001
             return {"error": f"the world did not answer ({type(error).__name__})"}
-        if result.get("ok"):
-            verb = "took" if request.get("revoke") else "gave"
-            self.log(f"{GREEN}{verb} {player} {result.get('powers')}{RESET}")
-        if unknown:
-            result["unknown"] = unknown
-            result["available"] = list(POWERS)
+        if result.get("ok") and request.get("revoke"):
+            self.log(f"{GREEN}took {result.get('revoked')} from {player}{RESET}")
+        elif result.get("ok"):
+            self.log(f"{GREEN}gave {player} '{result.get('granted')}'{RESET}"
+                     f" {DIM}{result.get('triggers')} {result.get('switches')}{RESET}")
+            if result.get("unknown") or result.get("refused"):
+                self.log(f"{YELLOW}not understood: {result.get('unknown')} "
+                         f"{result.get('refused')}{RESET}")
         return result
 
     @staticmethod

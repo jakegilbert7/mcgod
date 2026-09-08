@@ -4721,56 +4721,101 @@ class TheGodMayAct(unittest.TestCase):
         """Asked to fly and throw fire, the god reached for creative mode and a stack of
         fire charges, because commands were its only lever. Creative is not a superpower,
         it is a different game. None of this needs a client mod: flight without creative,
-        a fireball from an empty hand and immunity to your own fire are ordinary server
-        API, and none of them is expressible as a command."""
+        an entity thrown along the line of sight and immunity to your own fire are
+        ordinary server API, and none of them is expressible as a command."""
         from evidence import POWER_TOOL
-        from scan import POWERS
 
         java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
-        for power in ("flight", "fireball", "fire_immunity", "fall_immunity",
-                      "flame_trail"):
-            self.assertIn(f'"{power}"', java)
-            self.assertIn(power, POWERS)
         self.assertIn("player.setAllowFlight(true)", java,
                       "flight without creative keeps damage, hunger and inventory")
-        self.assertIn("player.getWorld().spawn(", java)
+        self.assertIn("player.getEyeLocation().getDirection()", java,
+                      "a summoned entity flies in world axes; aiming needs the look vector")
         self.assertIn("Creative is not a superpower", POWER_TOOL["description"])
-        self.assertIn("EMPTY HAND", POWER_TOOL["description"],
-                      "the player has to be told how to throw it")
+
+    def test_a_power_is_invented_rather_than_chosen_from_a_list(self):
+        """It was a fixed enum of eighteen, and the interesting requests are never on such
+        a list. A power is now a trigger plus commands plus a few switches, so a web
+        shooter and a wake of ice are writable without anyone having thought of them."""
+        from evidence import POWER_TOOL
+        from scan import SWITCHES, TRIGGERS
+
+        java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
+        self.assertNotIn("List.of(\"flight\"", java, "no fixed vocabulary of powers")
+        for trigger in TRIGGERS:
+            self.assertIn(f'"{trigger}"', java)
+            self.assertIn(trigger, POWER_TOOL["description"])
+        for flag in SWITCHES:
+            self.assertIn(f'"{flag}', java)
+        schema = POWER_TOOL["input_schema"]["properties"]
+        for field in ("scripts", "switches", "projectile", "every", "cooldown_ms"):
+            self.assertIn(field, schema)
+        self.assertNotIn("powers", schema, "there is no list left to choose from")
+
+    def test_a_power_fires_when_you_click_at_nothing(self):
+        """Right-clicking air with an empty hand sends the server no packet at all: the
+        client reports a use only when an item or a block is in reach. So a power bound to
+        it appeared to work only when facing something. The arm swing always arrives."""
+        java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
+        self.assertIn("PlayerAnimationEvent", java)
+        self.assertIn("PlayerAnimationType.ARM_SWING", java)
+        self.assertIn('fire(event.getPlayer(), "on_use")', java)
+        self.assertNotIn("event.getItem() != null", java,
+                         "requiring an empty hand is what made this only work in reach")
+
+    def test_a_scripted_power_passes_the_same_gate_a_command_does(self):
+        """Binding a command to a right-click must not be a way around what may be run."""
+        text = (self.JAVA.parent / "ScanCommandHandler.java").read_text(encoding="utf-8")
+        power = text[text.index("private void power("):text.index("private static void strings(")]
+        self.assertIn("CommandService.inspect(value.getAsString(), true)", power,
+                      "every scripted command is inspected, and always as anchored")
+        self.assertIn("refused.add(verdict.refusal())", power)
 
     def test_a_granted_power_is_given_back_when_it_runs_out(self):
         """And never takes away what was there before: a granted minute running out must
         not strand a builder in creative mode mid-air."""
         java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
-        self.assertIn("private synchronized void expire()", java)
+        self.assertIn("private void restore(Player player, Held holder)", java)
         self.assertIn("getGameMode() != GameMode.CREATIVE", java)
+        self.assertIn("now >= a.expiresAtTick", java)
         self.assertIn("public void onQuit(", java, "nothing lingers on a player who left")
-        self.assertIn("powers.revokeAll()", (HERE.parent / "plugin" / "src" / "main"
-                                             / "java" / "io" / "github" / "jakegilbert7"
-                                             / "mcgod" / "McGodPlugin.java")
-                      .read_text(encoding="utf-8"))
+        self.assertIn("powers.revokeAll()",
+                      (self.JAVA.parent / "StatsCommand.java").read_text(encoding="utf-8"),
+                      "/mcgod stop takes back everything the god handed out")
 
-    def test_an_invented_power_is_refused_with_the_real_list(self):
+    def test_a_word_the_model_invented_comes_back_named(self):
+        """A model told nothing invents the same word again. What was not understood is
+        reported with the real vocabulary beside it, and the rest of the power still
+        stands: one unknown switch does not cost the player their ability."""
         import asyncio
 
-        import god as god_module
+        import god as god_module  # noqa: F401
         from god import God
 
         store = Store(":memory:")
-        saved = god_module.__dict__.get("grant_power")
         import scan
         original = scan.grant_power
-        async def granted(player, powers, url, duration=0, revoke=False):
-            return {"ok": True, "powers": [p for p in powers if p in scan.POWERS]}
+        seen = {}
+        async def granted(player, name, url, **kwargs):
+            seen.update(kwargs)
+            seen["player"] = player
+            seen["name"] = name
+            return {"ok": True, "granted": name, "triggers": ["on_use"],
+                    "switches": ["fly"], "unknown": ["heat_vision"],
+                    "refused": [], "switches_available": list(scan.SWITCHES)}
         scan.grant_power = granted
         try:
             g = God(store, use_model=False)
             g.names["u"] = "playerone"
-            result = asyncio.run(g.grant_powers(
-                {"player": "playerone", "powers": ["flight", "heat_vision"]}, "u"))
-            self.assertEqual(result["powers"], ["flight"])
+            result = asyncio.run(g.grant_powers({
+                "player": "playerone", "name": "web shooter",
+                "scripts": {"on_use": ["setblock ^ ^ ^4 cobweb"]},
+                "switches": ["fly", "heat_vision"],
+                "projectile": "small_fireball",
+            }, "u"))
+            self.assertEqual(result["granted"], "web shooter")
             self.assertEqual(result["unknown"], ["heat_vision"])
-            self.assertIn("fireball", result["available"])
+            self.assertEqual(seen["scripts"], {"on_use": ["setblock ^ ^ ^4 cobweb"]})
+            self.assertEqual(seen["projectile"], "small_fireball")
         finally:
             scan.grant_power = original
             store.close()

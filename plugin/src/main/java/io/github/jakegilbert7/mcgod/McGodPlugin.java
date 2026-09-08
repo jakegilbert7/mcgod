@@ -92,7 +92,7 @@ public final class McGodPlugin extends JavaPlugin {
         dispatcher = new EventDispatcher(queue, sinks, flushMillis, getLogger());
         runner = new CommandRunner(this, queue, getLogger());
         runner.start();
-        powers = new PowerService(this, queue, getLogger());
+        powers = new PowerService(this, queue, runner, getLogger());
         getServer().getPluginManager().registerEvents(powers, this);
         dispatcher.start();
 

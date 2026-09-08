@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -326,63 +327,124 @@ public final class ScanCommandHandler {
     }
 
     /**
-     * Gives or takes powers: the things no command can express.
+     * Gives or takes an ability the god has invented.
+     *
+     * <p>An ability is a trigger, some commands, and a few switches, rather than a name from
+     * a list. The commands pass the same gate a direct command passes, and always as though
+     * anchored, because a power runs from wherever its owner is standing. Binding a command
+     * to a gesture is not a way around what may be run.
      *
      * <p>Runs on the main thread because it touches players directly.
      */
     private void power(WebSocket conn, String id, JsonObject request, boolean give) {
         String player = request.has("player") && !request.get("player").isJsonNull()
                 ? request.get("player").getAsString() : null;
-        List<String> wanted = new ArrayList<>();
-        if (request.has("powers") && request.get("powers").isJsonArray()) {
-            for (var value : request.getAsJsonArray("powers")) {
-                wanted.add(value.getAsString());
+        String name = request.has("name") && !request.get("name").isJsonNull()
+                ? request.get("name").getAsString() : null;
+
+        if (!give) {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                List<String> removed = powers.revoke(player, name);
+                StringBuilder out = new StringBuilder("{\"rpc\":\"power_result\",\"id\":");
+                Json.string(out, id);
+                if (removed == null) {
+                    out.append(",\"ok\":false,\"error\":");
+                    Json.string(out, "no player called " + player + " is here");
+                } else {
+                    out.append(",\"ok\":true,\"revoked\":");
+                    strings(out, removed);
+                }
+                out.append('}');
+                if (conn.isOpen()) {
+                    conn.send(out.toString());
+                }
+            });
+            return;
+        }
+
+        List<String> switches = new ArrayList<>();
+        if (request.has("switches") && request.get("switches").isJsonArray()) {
+            for (var value : request.getAsJsonArray("switches")) {
+                switches.add(value.getAsString());
             }
         }
+        Map<String, List<String>> scripts = new LinkedHashMap<>();
+        List<String> refused = new ArrayList<>();
+        if (request.has("scripts") && request.get("scripts").isJsonObject()) {
+            for (var entry : request.getAsJsonObject("scripts").entrySet()) {
+                if (!entry.getValue().isJsonArray()) {
+                    continue;
+                }
+                List<String> accepted = new ArrayList<>();
+                for (var value : entry.getValue().getAsJsonArray()) {
+                    CommandService.Verdict verdict =
+                            CommandService.inspect(value.getAsString(), true);
+                    if (verdict.allowed()) {
+                        accepted.add(verdict.command());
+                    } else {
+                        refused.add(verdict.refusal());
+                    }
+                }
+                if (!accepted.isEmpty()) {
+                    scripts.put(entry.getKey(), accepted);
+                }
+            }
+        }
+        String projectile = request.has("projectile") && !request.get("projectile").isJsonNull()
+                ? request.get("projectile").getAsString() : null;
+        double speed = request.has("speed") ? request.get("speed").getAsDouble() : 0;
+        int every = request.has("every") ? request.get("every").getAsInt() : 0;
         long duration = request.has("duration") ? request.get("duration").getAsLong() : 0;
-        List<String> unknown = new ArrayList<>();
-        for (String name : wanted) {
-            if (!PowerService.known(name)) {
-                unknown.add(name);
-            }
-        }
+        long cooldown = request.has("cooldown_ms") ? request.get("cooldown_ms").getAsLong() : 200;
+
         Bukkit.getScheduler().runTask(plugin, () -> {
-            List<String> changed = give ? powers.grant(player, wanted, duration)
-                                        : powers.revoke(player, wanted);
+            PowerService.Granted granted = powers.grant(player, name, switches, scripts,
+                    projectile, speed, every, duration, cooldown);
             StringBuilder out = new StringBuilder("{\"rpc\":\"power_result\",\"id\":");
             Json.string(out, id);
-            if (changed == null) {
+            if (granted.error() != null) {
                 out.append(",\"ok\":false,\"error\":");
-                Json.string(out, "no player called " + player + " is here");
+                Json.string(out, granted.error());
                 out.append('}');
             } else {
-                out.append(",\"ok\":true,\"powers\":[");
-                for (int i = 0; i < changed.size(); i++) {
-                    if (i > 0) {
-                        out.append(',');
-                    }
-                    Json.string(out, changed.get(i));
+                out.append(",\"ok\":true,\"granted\":");
+                Json.string(out, granted.name());
+                out.append(",\"switches\":");
+                strings(out, granted.switches());
+                out.append(",\"triggers\":");
+                strings(out, granted.triggers());
+                out.append(",\"projectile\":");
+                if (granted.projectile() == null) {
+                    out.append("null");
+                } else {
+                    Json.string(out, granted.projectile());
                 }
-                out.append("],\"unknown\":[");
-                for (int i = 0; i < unknown.size(); i++) {
-                    if (i > 0) {
-                        out.append(',');
-                    }
-                    Json.string(out, unknown.get(i));
-                }
-                out.append("],\"available\":[");
-                for (int i = 0; i < PowerService.POWERS.size(); i++) {
-                    if (i > 0) {
-                        out.append(',');
-                    }
-                    Json.string(out, PowerService.POWERS.get(i));
-                }
-                out.append("]}");
+                out.append(",\"unknown\":");
+                strings(out, granted.unknown());
+                out.append(",\"refused\":");
+                strings(out, refused);
+                out.append(",\"triggers_available\":");
+                strings(out, PowerService.TRIGGERS);
+                out.append(",\"switches_available\":");
+                strings(out, PowerService.SWITCHES);
+                out.append('}');
             }
             if (conn.isOpen()) {
                 conn.send(out.toString());
             }
         });
+    }
+
+    /** A JSON array of strings, which the power reply needs six times over. */
+    private static void strings(StringBuilder out, List<String> values) {
+        out.append('[');
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                out.append(',');
+            }
+            Json.string(out, values.get(i));
+        }
+        out.append(']');
     }
 
     /** Stops a repeating effect, or all of them. */

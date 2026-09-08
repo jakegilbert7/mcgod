@@ -17,8 +17,9 @@ god: You built a cobblestone elephant sculpture with gold-block eyes and oak-but
 you: how many villages are within 10000 blocks of me
 god: There are 272 villages within 10,000 blocks of you, including the one you're in.
 
-you: give me superpowers, I want to fly and throw fire
-god: [grants flight, fireball, fire immunity, a flame trail]
+you: give me a power that shoots webs
+god: [writes one: right-click runs `setblock ^ ^ ^4 cobweb`, and says which
+      button works it]
 ```
 
 ## How it works
@@ -107,9 +108,14 @@ language model:
   allowlist decides what may run; nothing that grants permission, removes a player, changes
   server settings or prints to chat is on it. Work is drained a bounded number per tick, so
   the request is unbounded but the pace is not.
-- **`grant_power`** gives abilities no command can express: flight without creative mode, a
-  fireball from an empty hand, immunity to your own fire, particle trails. Held per player
-  with an expiry, restoring what was there before.
+- **`grant_power`** invents an ability rather than picking one from a list. The model writes
+  what gesture triggers it and what commands it runs — right-click, sneak, move, attack, be
+  hurt, or a tick interval — and those commands run anchored to the player, so `^ ^ ^4` is
+  four blocks along their line of sight. A handful of switches cover what no command can say:
+  flight without creative mode, no fall damage, immunity to a damage cause, walk speed, and an
+  entity thrown where they are looking, which a summon cannot aim. Held per player with an
+  expiry, restoring what was there before. The scripted commands pass the same allowlist a
+  direct command does, so binding one to a right-click is not a way around it.
 - **`design_build`** asks a separate build model for the commands that make a shape, because
   holding a figure in mind is a different skill from conversation.
 
@@ -155,7 +161,7 @@ Java rather than as data.
 | `render.py` `assets.py` `entity_models.py` `render_structures.py` | the renderer and its inputs |
 | `scan.py` `bridge.py` `consumer.py` `replay.py` | the wire: RPC, live stream, replay harness |
 | `model_api.py` `config.py` | provider boundary for Anthropic and OpenRouter |
-| `test_regression.py` | 294 offline tests |
+| `test_regression.py` | 297 offline tests |
 | `cubiomes/` | vendored cubiomes, patched to 26.2 — see its `PROVENANCE.md` |
 
 Also `classify.py`, `eval_segment.py`, `compare_models.py`, `survey.py`, `summary.py`,
@@ -187,7 +193,7 @@ vision, build and segmentation roles are separate variables so each can be swapp
 measured on its own.
 
 ```bash
-.venv/bin/python test_regression.py    # 252 offline tests; no server, no API key
+.venv/bin/python test_regression.py    # 255 offline tests; no server, no API key
 .venv/bin/python seedmap.py --count village --at 300 -300 --radius 10000
 .venv/bin/python masses.py --audit
 .venv/bin/python render_structures.py --check
@@ -195,9 +201,9 @@ measured on its own.
 
 ### The corpus
 
-Forty-two of the 294 tests replay recorded sessions, and those recordings are not in this
+Forty-two of the 297 tests replay recorded sessions, and those recordings are not in this
 repository: a session file is a play-by-play of somebody's game with their player UUID on
-every line. Without one those tests skip and the other 252 run. Play with the plugin
+every line. Without one those tests skip and the other 255 run. Play with the plugin
 installed, then copy a file from `server/plugins/McGod/events/` into
 `agent/sessions/corpus/`, and the whole suite runs against your own world.
 
