@@ -1,0 +1,17 @@
+name: McGod
+version: 0.1.0
+main: io.github.jakegilbert7.mcgod.McGodPlugin
+description: LLM god harness
+api-version: '26.2'
+libraries:
+  - org.java-websocket:Java-WebSocket:1.6.0
+  - com.google.code.gson:gson:2.14.0
+commands:
+  mcgod:
+    description: McGod capture diagnostics
+    usage: /mcgod stats
+    permission: mcgod.admin
+permissions:
+  mcgod.admin:
+    description: Use /mcgod
+    default: op

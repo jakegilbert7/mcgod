@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Build the game's own biome search tree for 26.2 and emit it as a C table for cubiomes.
+
+    python3 gen_rtree262.py reports/.../biome_parameters/minecraft/overworld.json \\
+        path/to/cubiomes/biomes.h > path/to/cubiomes/tables/rtree262.h
+
+This is a port of net.minecraft.world.level.biome.Climate$RTree as read from the 26.2
+server jar's bytecode (javap; the jar ships unobfuscated). Every rule below is the game's:
+
+  * a node with one child IS that child; up to six children sort by the sum over the
+    seven parameters of |(min+max)/2| and become a subtree;
+  * more than six: for each of the seven parameters in turn, sort the nodes by that
+    parameter's midpoint, then by every following parameter's midpoint (wrapping), cut
+    the sorted list into buckets of 6^floor(log6(n - 0.01)), and price the split as the
+    sum over buckets of the sum over parameters of |max - min| of the bucket's bounding
+    box; the cheapest parameter wins, ties to the earliest; its buckets are then sorted
+    by the absolute midpoints along that parameter and each bucket is built recursively;
+  * Java's (min+max)/2 truncates toward zero, and List.sort is stable.
+
+The seventh parameter is the entry's offset, a point [offset, offset]; every vanilla
+offset is zero. The C side searches this tree exactly as Climate$RTree$SubTree.search
+does, including the previous-result hint that decides exact ties in the game.
+"""
+
+import json
+import math
+import struct
+import sys
+from functools import cmp_to_key
+
+sys.path.insert(0, __file__.rsplit("/", 1)[0])
+from gen_plist262 import ORDER, enum_ids, quantise  # noqa: E402
+
+DIMS = 7
+
+
+def java_half(a: int, b: int) -> int:
+    s = a + b
+    return -((-s) // 2) if s < 0 else s // 2
+
+
+class Node:
+    __slots__ = ("box", "children", "biome")
+
+    def __init__(self, box, children=None, biome=-1):
+        self.box = box            # list of 7 (min, max)
+        self.children = children  # None for a leaf
+        self.biome = biome
+
+
+def span(nodes):
+    return [(min(n.box[i][0] for n in nodes), max(n.box[i][1] for n in nodes))
+            for i in range(DIMS)]
+
+
+def cost(box) -> int:
+    return sum(abs(hi - lo) for lo, hi in box)
+
+
+def sort_nodes(nodes, dim: int, absolute: bool) -> None:
+    def key(node):
+        out = []
+        for i in range(DIMS):
+            d = (dim + i) % DIMS
+            mid = java_half(node.box[d][0], node.box[d][1])
+            out.append(abs(mid) if absolute else mid)
+        return tuple(out)
+    nodes.sort(key=key)   # Python's sort is stable, as Java's List.sort is
+
+
+def bucketize(nodes):
+    size = int(math.pow(6.0, math.floor(math.log(len(nodes) - 0.01) / math.log(6.0))))
+    buckets, current = [], []
+    for node in nodes:
+        current.append(node)
+        if len(current) >= size:
+            buckets.append(Node(span(current), current))
+            current = []
+    if current:
+        buckets.append(Node(span(current), current))
+    return buckets
+
+
+def build(nodes):
+    if len(nodes) == 1:
+        return nodes[0]
+    if len(nodes) <= 6:
+        nodes = sorted(nodes, key=lambda n: sum(
+            abs(java_half(n.box[i][0], n.box[i][1])) for i in range(DIMS)))
+        return Node(span(nodes), nodes)
+    best_cost, best_dim, best_buckets = None, -1, None
+    nodes = list(nodes)
+    for dim in range(DIMS):
+        sort_nodes(nodes, dim, False)
+        buckets = bucketize(nodes)
+        total = sum(cost(b.box) for b in buckets)
+        if best_cost is None or total < best_cost:
+            best_cost, best_dim, best_buckets = total, dim, buckets
+    sort_nodes(best_buckets, best_dim, True)
+    children = [build(b.children) for b in best_buckets]
+    return Node(span(children), children)
+
+
+def main(argv):
+    if len(argv) != 2:
+        print(__doc__, file=sys.stderr)
+        return 2
+    entries = json.load(open(argv[0], encoding="utf-8"))["biomes"]
+    ids = enum_ids(argv[1])
+    leaves = []
+    for entry in entries:
+        name = entry["biome"].replace("minecraft:", "")
+        p = entry["parameters"]
+        box = []
+        for key in ORDER:
+            v = p[key]
+            lo, hi = (v, v) if not isinstance(v, list) else v
+            box.append((quantise(lo), quantise(hi)))
+        off = quantise(p.get("offset", 0.0))
+        box.append((off, off))
+        leaves.append(Node(box, None, ids[name]))
+    root = build(leaves)
+
+    # Flatten breadth-first so every node's children are contiguous.
+    flat, queue = [], [root]
+    index = {id(root): 0}
+    while queue:
+        node = queue.pop(0)
+        flat.append(node)
+        if node.children:
+            node_first = len(flat) + len(queue)
+            for child in node.children:
+                index[id(child)] = node_first
+                node_first += 1
+                queue.append(child)
+    first = []
+    for node in flat:
+        first.append(index[id(node.children[0])] if node.children else -1)
+    out = sys.stdout
+    out.write("// Generated by gen_rtree262.py: the game's Climate$RTree over the 26.2 parameter\n")
+    out.write("// list, breadth-first, children contiguous. Do not edit by hand.\n")
+    out.write("#include <inttypes.h>\n\n")
+    out.write(f"enum {{ rtree262_len = {len(flat)} }};\n\n")
+    out.write("static const int32_t rtree262_box[rtree262_len][14] = {\n")
+    for node in flat:
+        out.write("    {" + ",".join(f"{lo},{hi}" for lo, hi in node.box) + "},\n")
+    out.write("};\n\nstatic const int32_t rtree262_first[rtree262_len] = {\n")
+    for i in range(0, len(flat), 16):
+        out.write("    " + ",".join(str(v) for v in first[i:i + 16]) + ",\n")
+    out.write("};\n\nstatic const uint8_t rtree262_count[rtree262_len] = {\n")
+    for i in range(0, len(flat), 24):
+        out.write("    " + ",".join(str(len(n.children) if n.children else 0)
+                                   for n in flat[i:i + 24]) + ",\n")
+    out.write("};\n\nstatic const int16_t rtree262_biome[rtree262_len] = {\n")
+    for i in range(0, len(flat), 24):
+        out.write("    " + ",".join(str(n.biome) for n in flat[i:i + 24]) + ",\n")
+    out.write("};\n")
+    print(f"tree: {len(flat)} nodes, {len(leaves)} leaves, depth "
+          f"{_depth(root)}", file=sys.stderr)
+    return 0
+
+
+def _depth(node) -> int:
+    return 1 + max((_depth(c) for c in node.children), default=0) if node.children else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

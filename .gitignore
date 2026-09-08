@@ -1,0 +1,73 @@
+# Secrets. The one file that must never be committed.
+.env
+*.env
+!.env.example
+**/.env
+**/*.env
+!**/.env.example
+*.key
+*.pem
+credentials*
+secrets*
+
+# The Minecraft server directory in its entirety.
+#
+# Three separate reasons, any one of which is enough. It holds paper.jar and the bundled
+# Mojang server, which may not be redistributed. It holds the world, which is gigabytes of
+# generated terrain that nobody else wants. And it holds ops.json, whitelist.json,
+# usercache.json, banned-ips.json and the logs, which carry player names, UUIDs and IP
+# addresses.
+server/
+
+# Python environment and bytecode.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Gradle build output.
+plugin/build/
+plugin/.gradle/
+.gradle/
+build/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Compiled native libraries. seedmap.py builds cubiomes on first use; the source is
+# vendored, the binary is not.
+*.dylib
+*.so
+*.dll
+*.o
+*.a
+
+# Derived world state. Every one of these is rebuilt from the recorded sessions and the
+# live server, and every one of them describes a particular person's game.
+agent/mcgod.db
+agent/mcgod.db-shm
+agent/mcgod.db-wal
+agent/memory.db
+agent/*.bak
+agent/renders/
+renders/
+
+# Recorded play, all of it. These are the test fixture and they are also somebody's account:
+# a player UUID on every line, and whatever was said in chat. Record your own into
+# agent/sessions/corpus/ and the 42 tests that need one start running.
+agent/sessions/
+
+# Scratch output from the seed-map port and other one-off experiments.
+reports/
+*.patch
+!cubiomes-26.2.patch
+
+# Editor and OS noise.
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*~

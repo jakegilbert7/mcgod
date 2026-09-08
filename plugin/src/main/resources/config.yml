@@ -1,0 +1,40 @@
+# McGod L0 capture settings.
+capture:
+  # Hand-off queue between the main thread and the writer thread. Events arriving when the
+  # queue is full are dropped and counted; the queue never blocks the tick.
+  queue-capacity: 65536
+
+  # How often the writer thread flushes its buffer to disk, in milliseconds.
+  flush-interval-ms: 1000
+
+  # Movement downsampling: one position sample per player per this many ticks (40 = 2s).
+  position-sample-ticks: 40
+
+  # Item pickups are rolled up per item type and emitted this often (1200 = 60s).
+  pickup-rollup-ticks: 1200
+
+  # Rich per-player context snapshot (health, hunger, xp, biome, light, time, weather,
+  # equipment) every this many ticks (200 = 10s). This is state the game never emits an
+  # event for; without sampling it, nothing downstream knows it was night and raining.
+  state-sample-ticks: 200
+
+  # Edge length in blocks of the XZ grid cell used for region_enter events.
+  region-size: 64
+
+  # Blocks a player must travel clear of their last recorded cell before a new region_enter
+  # is emitted. Without this, working near a cell edge emits an entry on every crossing and a
+  # stationary build reads downstream as travel. 0 disables.
+  region-hysteresis: 8
+
+# The L0 bridge: a WebSocket server that streams events to the Python agent. Frames are
+# byte-identical to the JSONL lines. Capture to file continues even if the bridge fails.
+bridge:
+  enabled: true
+  # Loopback only. Do not expose this without adding authentication first.
+  host: 127.0.0.1
+  port: 8765
+
+# Region scans (L4 keyframes, quest verification). Reads are rate limited so a large region
+# costs many quiet ticks rather than one long stall.
+scan:
+  chunks-per-tick: 4

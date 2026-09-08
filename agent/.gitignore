@@ -1,0 +1,9 @@
+.env
+mcgod.db
+mcgod.db-wal
+mcgod.db-shm
+__pycache__/
+.venv/
+*.bak
+renders/archive/
+sessions/live-*.jsonl

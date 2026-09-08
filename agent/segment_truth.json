@@ -1,0 +1,29 @@
+{
+  "_comment": "Human-reviewed segmentation truth for the current test world (2026-09-04). A station/shelter and the long rail segment are intentionally separate semantic objects. `terms` are words any acceptable name may contain; a name matches if it contains any of them. `patch` is where to centre the read.",
+  "structures": [
+    {"id": "golem_statue", "min": [165, 64, 273], "max": [176, 73, 275],
+     "terms": ["statue", "golem", "figure", "monument", "effigy"],
+     "patch": [170, 68, 274]},
+    {"id": "timber_hall", "min": [171, 63, 293], "max": [179, 70, 303],
+     "terms": ["hall", "house", "home", "cottage", "dwelling", "farmhouse"],
+     "patch": [175, 66, 298]},
+    {"id": "birch_cottage", "min": [232, 68, 295], "max": [241, 75, 303],
+     "terms": ["house", "cottage", "hut", "home", "dwelling", "cabin"],
+     "patch": [236, 71, 299]},
+    {"id": "animal_pen", "min": [163, 64, 300], "max": [173, 67, 312],
+     "terms": ["pen", "coop", "enclosure", "paddock", "fenced", "farm"],
+     "patch": [168, 65, 306]},
+    {"id": "rail_spur_station", "min": [174, 64, 303], "max": [179, 66, 312],
+     "terms": ["station", "stop", "shelter", "spur", "platform", "rail"],
+     "patch": [176, 65, 307]},
+    {"id": "cobble_watchtower", "min": [174, 64, 309], "max": [181, 71, 317],
+     "terms": ["watchtower", "watch tower", "lookout", "tower", "keep"],
+     "patch": [178, 67, 313]},
+    {"id": "rail_loop", "min": [155, 64, 315], "max": [174, 68, 323],
+     "terms": ["rail", "minecart", "track", "coaster", "loop", "line"],
+     "patch": [164, 66, 319]},
+    {"id": "timber_tower_house", "min": [160, 66, 323], "max": [169, 73, 329],
+     "terms": ["tower", "house", "watchtower", "keep", "home"],
+     "patch": [164, 69, 326]}
+  ]
+}

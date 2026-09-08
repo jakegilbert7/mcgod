@@ -1,0 +1,16 @@
+[
+ {
+  "found": true,
+  "iou": 1.0,
+  "seconds": 51.4,
+  "named": true,
+  "name": "cobblestone watchtower",
+  "spurious": 3,
+  "produced": 4,
+  "model": "claude-sonnet-5",
+  "plan_view": false,
+  "start": "warm",
+  "structure": "cobble_watchtower",
+  "run": 0
+ }
+]

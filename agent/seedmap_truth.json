@@ -1,0 +1,213 @@
+{
+ "_comment": "Known answers for the recorded test world, seed 2343485370624270099, Minecraft 26.2. Positions marked paper_confirmed were independently located by the running server; the rest are the seed map's own output, pinned so a vendored-library change or a version bump fails loudly instead of quietly describing a different world.",
+ "seed": 2343485370624270099,
+ "version": "26.2",
+ "biomes": [
+  {
+   "pos": [
+    300,
+    63,
+    -300
+   ],
+   "biome": "plains"
+  },
+  {
+   "pos": [
+    0,
+    63,
+    0
+   ],
+   "biome": "ocean"
+  },
+  {
+   "pos": [
+    -1536,
+    63,
+    256
+   ],
+   "biome": "savanna"
+  },
+  {
+   "pos": [
+    16000,
+    63,
+    -16000
+   ],
+   "biome": "deep_cold_ocean"
+  },
+  {
+   "pos": [
+    0,
+    32,
+    0
+   ],
+   "dim": "the_nether",
+   "biome": "soul_sand_valley"
+  },
+  {
+   "pos": [
+    3000,
+    64,
+    3000
+   ],
+   "dim": "the_end",
+   "biome": "small_end_islands"
+  }
+ ],
+ "nearest": [
+  {
+   "structure": "village",
+   "from": [
+    300,
+    -300
+   ],
+   "pos": [
+    352,
+    -320
+   ],
+   "paper_confirmed": true
+  },
+  {
+   "structure": "monument",
+   "from": [
+    300,
+    -300
+   ],
+   "pos": [
+    -112,
+    -784
+   ],
+   "paper_confirmed": true
+  },
+  {
+   "structure": "trial_chambers",
+   "from": [
+    300,
+    -300
+   ],
+   "pos": [
+    80,
+    -432
+   ],
+   "paper_confirmed": true
+  },
+  {
+   "structure": "swamp_hut",
+   "from": [
+    300,
+    -300
+   ],
+   "pos": [
+    3216,
+    -1920
+   ],
+   "paper_confirmed": true
+  },
+  {
+   "structure": "pillager_outpost",
+   "from": [
+    300,
+    -300
+   ],
+   "pos": [
+    -336,
+    2112
+   ],
+   "paper_confirmed": true
+  },
+  {
+   "structure": "mansion",
+   "from": [
+    300,
+    -300
+   ],
+   "pos": [
+    640,
+    3264
+   ],
+   "paper_confirmed": true
+  },
+  {
+   "structure": "ancient_city",
+   "from": [
+    300,
+    -300
+   ],
+   "pos": [
+    2432,
+    -1360
+   ],
+   "paper_confirmed": true
+  }
+ ],
+ "counts": [
+  {
+   "structure": "village",
+   "from": [
+    300,
+    -300
+   ],
+   "radius": 10000,
+   "candidates": 1068,
+   "count": 272
+  },
+  {
+   "structure": "mansion",
+   "from": [
+    300,
+    -300
+   ],
+   "radius": 20000,
+   "candidates": 769,
+   "count": 10
+  },
+  {
+   "structure": "ancient_city",
+   "from": [
+    300,
+    -300
+   ],
+   "radius": 8000,
+   "candidates": 1363,
+   "count": 22
+  },
+  {
+   "structure": "monument",
+   "from": [
+    300,
+    -300
+   ],
+   "radius": 6000,
+   "candidates": 432,
+   "count": 44
+  },
+  {
+   "structure": "igloo",
+   "from": [
+    300,
+    -300
+   ],
+   "radius": 12000,
+   "candidates": 1724,
+   "count": 101
+  }
+ ],
+ "spawn": [
+  128,
+  32
+ ],
+ "strongholds": [
+  [
+   -872,
+   -1880
+  ],
+  [
+   -876,
+   -1884
+  ],
+  [
+   1684,
+   164
+  ]
+ ]
+}
