@@ -201,28 +201,6 @@ every line. Without one those tests skip and the other 252 run. Play with the pl
 installed, then copy a file from `server/plugins/McGod/events/` into
 `agent/sessions/corpus/`, and the whole suite runs against your own world.
 
-## Notes on the engineering
-
-A few decisions that were not obvious and cost something to learn:
-
-- **Net deltas, not gross counts.** A player who places 500 blocks and breaks 490 has built
-  nothing. Gross counting is the likeliest source of a god confidently describing a structure
-  that is not there.
-- **Absence of evidence is refused.** A scan that finds nothing where a structure was
-  believed to stand is a failed read, not a demolition. The same trap appears in half a dozen
-  places, and it is why an empty result never retires anything on its own.
-- **Where a pipeline and its measurement share state, the measurement flatters the
-  pipeline.** The segmentation evaluator seeded its truth from the store and so scored
-  itself; it reported a perfect box for doing nothing.
-- **A model that gates existence will delete things.** Segmentation once decided what was
-  real, so anything it declined to name had no present-tense record at all, and 47% of block
-  events could not be attached to any place. Hence the ledger beneath the landmarks.
-- **Saying what was accepted is not saying what happened.** A command queued is not a command
-  that worked, and a command that reports success can still have changed nothing.
-- **Never block the tick.** Everything the server does for the god is paced: scans are
-  chunked, commands are drained a bounded number per tick, and the renderer runs off the
-  event loop.
-
 ## Layout
 
 ```
