@@ -4750,6 +4750,11 @@ class TheGodMayAct(unittest.TestCase):
         for field in ("scripts", "switches", "projectile", "every", "cooldown_ms"):
             self.assertIn(field, schema)
         self.assertNotIn("powers", schema, "there is no list left to choose from")
+        # And no drift the other way: a trigger the plugin grew that the model is never
+        # told about is a capability nobody can reach.
+        declared = java[java.index("List<String> TRIGGERS = List.of("):]
+        self.assertEqual(sorted(re.findall(r'"(\w+)"', declared[:declared.index(";")])),
+                         sorted(TRIGGERS))
 
     def test_a_power_fires_when_you_click_at_nothing(self):
         """Right-clicking air with an empty hand sends the server no packet at all: the
@@ -4819,6 +4824,83 @@ class TheGodMayAct(unittest.TestCase):
         finally:
             scan.grant_power = original
             store.close()
+
+    def test_taking_every_power_away_needs_no_name(self):
+        """Asked to remove all their superpowers the god reported success and removed
+        nothing. A missing name was being defaulted to the literal string "power", so the
+        revoke asked for one called that, matched nothing, and said it was done."""
+        import asyncio
+
+        from god import God
+
+        store = Store(":memory:")
+        import scan
+        original = scan.grant_power
+        asked = {}
+        async def revoked(player, name, url, **kwargs):
+            asked["name"] = name
+            asked["revoke"] = kwargs.get("revoke")
+            return {"ok": True, "revoked": ["Pig Launch"], "holding": []}
+        scan.grant_power = revoked
+        try:
+            g = God(store, use_model=False)
+            g.names["u"] = "playerone"
+            asyncio.run(g.grant_powers({"player": "playerone", "revoke": True}, "u"))
+            self.assertTrue(asked["revoke"])
+            self.assertFalse(asked["name"],
+                             "no name on a revoke means every power, not one called 'power'")
+        finally:
+            scan.grant_power = original
+            store.close()
+
+    def test_granting_a_held_name_replaces_it(self):
+        """"Make my arrow power fully automatic" is an edit. Stacking a second ability
+        beside the first left the player holding both, the original still firing, and the
+        change apparently ignored."""
+        java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
+        self.assertIn("existing.name.equalsIgnoreCase(ability.name)", java)
+        self.assertIn("replaced", java)
+        from evidence import POWER_TOOL
+        self.assertIn("REPLACES it", POWER_TOOL["description"])
+
+    def test_the_god_is_told_which_powers_they_already_hold(self):
+        """It cannot change or take back what it cannot see. Blind to the name of the
+        power it had just given, it invented a second one beside it."""
+        import inspect
+
+        import god
+
+        source = inspect.getsource(god.God.on_chat)
+        self.assertIn("held_powers", source)
+        self.assertIn("POWERS THEY HOLD RIGHT NOW", source)
+        self.assertIn("powers_text", source)
+
+    def test_something_thrown_acts_where_it_lands(self):
+        """"Make the pigs explode on impact" has no other answer: the interesting moment
+        happens to something the player threw, somewhere they are not. The god reached for
+        on_attack, which is the player swinging at something, and nothing exploded."""
+        from evidence import POWER_TOOL
+        from scan import TRIGGERS
+
+        java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
+        self.assertIn("on_hit", TRIGGERS)
+        self.assertIn('"on_hit"', java)
+        self.assertIn("ProjectileHitEvent", java,
+                      "a projectile reports its own impact")
+        self.assertIn("isOnGround()", java,
+                      "a thrown animal does not, so it is watched until it settles")
+        self.assertIn("runner.submitAt(script, where)", java,
+                      "the script runs where it landed, not where the player is")
+        self.assertIn("on_hit", POWER_TOOL["description"])
+
+    def test_a_command_can_run_at_a_place_with_nobody_there(self):
+        """Composed by the server, never by the model: the same rule that makes ~ usable
+        without making execute available."""
+        runner = self.RUNNER.read_text(encoding="utf-8")
+        self.assertIn("public synchronized int submitAt(", runner)
+        self.assertIn('"execute in " + at.getWorld().getKey() + " positioned "', runner)
+        self.assertIn("where.clone()", runner,
+                      "the thing that landed may be gone before the command runs")
 
     def test_building_a_shape_is_asked_of_a_builder(self):
         """A dialogue model asked for a humanoid statue produced something nobody would

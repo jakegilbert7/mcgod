@@ -103,6 +103,10 @@ public final class ScanCommandHandler {
                 power(conn, id, request, "grant_power".equals(rpc));
                 return;
             }
+            if ("held_powers".equals(rpc)) {
+                heldPowers(conn, id, request);
+                return;
+            }
             if ("environment".equals(rpc)) {
                 environment(conn, id, request);
                 return;
@@ -353,6 +357,8 @@ public final class ScanCommandHandler {
                 } else {
                     out.append(",\"ok\":true,\"revoked\":");
                     strings(out, removed);
+                    out.append(",\"holding\":");
+                    strings(out, powers.current(player));
                 }
                 out.append('}');
                 if (conn.isOpen()) {
@@ -419,6 +425,9 @@ public final class ScanCommandHandler {
                 } else {
                     Json.string(out, granted.projectile());
                 }
+                out.append(",\"replaced\":").append(granted.replaced());
+                out.append(",\"holding\":");
+                strings(out, granted.holding());
                 out.append(",\"unknown\":");
                 strings(out, granted.unknown());
                 out.append(",\"refused\":");
@@ -429,6 +438,29 @@ public final class ScanCommandHandler {
                 strings(out, PowerService.SWITCHES);
                 out.append('}');
             }
+            if (conn.isOpen()) {
+                conn.send(out.toString());
+            }
+        });
+    }
+
+    /**
+     * What a player is holding right now.
+     *
+     * <p>Asked before every answer, because a god that cannot see what it has already given
+     * cannot change it or take it back. Told "make my arrow power automatic" while blind to
+     * the name of that power, the model invented a second one beside it, and the first went
+     * on firing.
+     */
+    private void heldPowers(WebSocket conn, String id, JsonObject request) {
+        String player = request.has("player") && !request.get("player").isJsonNull()
+                ? request.get("player").getAsString() : null;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            StringBuilder out = new StringBuilder("{\"rpc\":\"power_result\",\"ok\":true,\"id\":");
+            Json.string(out, id);
+            out.append(",\"holding\":");
+            strings(out, powers.current(player));
+            out.append('}');
             if (conn.isOpen()) {
                 conn.send(out.toString());
             }

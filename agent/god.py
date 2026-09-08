@@ -2369,6 +2369,23 @@ thinking=thinking_for(VISION_MODEL),
             if known_features:
                 environment_text += "\n\n" + known_features
 
+        # What they are already holding. Without it the god can only ever add: asked to
+        # change a power it does not know the name of, it grants a second one beside the
+        # first and both go on firing.
+        powers_text = ""
+        try:
+            from scan import held_powers
+            holding = (await held_powers(who, URL)).get("holding") or []
+            powers_text = ("\n\nPOWERS THEY HOLD RIGHT NOW: "
+                           + (", ".join(f"{name!r}" for name in holding) if holding
+                              else "none")
+                           + ". To change one, grant it again with the SAME name, which "
+                             "replaces it. To take one away, revoke it by name; to take "
+                             "them all, revoke with no name.")
+        except Exception as error:  # noqa: BLE001
+            self.log(f"{YELLOW}could not read held powers "
+                     f"({type(error).__name__}){RESET}")
+
         visual_targets = {
             "current_position": pos,
             "resolved_structures": [
@@ -2377,7 +2394,7 @@ thinking=thinking_for(VISION_MODEL),
             ],
         }
         prompt = (render(sections) + "\n\n" + render_grounding(grounded, immersive=True)
-                  + environment_text
+                  + environment_text + powers_text
                   + f"\n\nINTERNAL VISUAL TARGETS: {json.dumps(visual_targets)}"
                   + "\nYou have a bounded render_world_area tool. When appearance "
                     "materially determines the answer, call it and inspect the fresh image "
@@ -2706,9 +2723,14 @@ thinking=thinking_for(VISION_MODEL),
         from scan import grant_power
 
         player = str(request.get("player") or self.names.get(actor) or "").strip()
-        name = str(request.get("name") or "power").strip()
+        # A missing name means "all of them" when taking away, and only when granting does
+        # it need a placeholder. Defaulting it to "power" on both paths made "remove all my
+        # superpowers" ask for one called "power", match nothing, and report success.
+        name = str(request.get("name") or "").strip()
         if not player:
             return {"error": "no player named"}
+        if not name and not request.get("revoke"):
+            name = "power"
         scripts = request.get("scripts") or {}
         if not isinstance(scripts, dict):
             scripts = {}
@@ -2726,10 +2748,15 @@ thinking=thinking_for(VISION_MODEL),
         except Exception as error:  # noqa: BLE001
             return {"error": f"the world did not answer ({type(error).__name__})"}
         if result.get("ok") and request.get("revoke"):
-            self.log(f"{GREEN}took {result.get('revoked')} from {player}{RESET}")
+            took = result.get("revoked") or []
+            self.log(f"{GREEN}took {took or 'nothing'} from {player}{RESET}"
+                     f" {DIM}still holding {result.get('holding')}{RESET}")
         elif result.get("ok"):
-            self.log(f"{GREEN}gave {player} '{result.get('granted')}'{RESET}"
-                     f" {DIM}{result.get('triggers')} {result.get('switches')}{RESET}")
+            verb = "changed" if result.get("replaced") else "gave"
+            thrown = result.get("projectile")
+            self.log(f"{GREEN}{verb} {player} '{result.get('granted')}'{RESET}"
+                     f" {DIM}{result.get('triggers')} {result.get('switches')}"
+                     f"{' throws ' + thrown if thrown else ''}{RESET}")
             if result.get("unknown") or result.get("refused"):
                 self.log(f"{YELLOW}not understood: {result.get('unknown')} "
                          f"{result.get('refused')}{RESET}")

@@ -10,8 +10,11 @@ import java.util.logging.Logger;
 
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
+import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.FallingBlock;
 import org.bukkit.entity.Fireball;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -21,6 +24,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerAnimationEvent;
 import org.bukkit.event.player.PlayerAnimationType;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -72,6 +76,12 @@ public final class PowerService implements Listener {
         long cooldownMs = 200;
     }
 
+    /** Something thrown that somebody is waiting on, and who threw it. */
+    private record Flying(UUID owner, String ability, long since) { }
+
+    /** How long a thrown thing is watched before it is forgotten. */
+    private static final int FLIGHT_TIMEOUT_TICKS = 400;
+
     /** What a player holds, and what was true before it was given. */
     private static final class Held {
         final List<Ability> abilities = new ArrayList<>();
@@ -81,7 +91,7 @@ public final class PowerService implements Listener {
 
     /** The triggers a script may hang from. Anything else is refused by name. */
     public static final List<String> TRIGGERS = List.of(
-            "on_use", "on_sneak", "on_move", "on_attack", "on_damaged", "every");
+            "on_use", "on_sneak", "on_move", "on_attack", "on_damaged", "on_hit", "every");
 
     /** The switches, which are the things no command expresses. */
     public static final List<String> SWITCHES = List.of(
@@ -93,6 +103,7 @@ public final class PowerService implements Listener {
     private final Logger log;
     private final Map<UUID, Held> held = new HashMap<>();
     private final Map<String, Long> lastFired = new HashMap<>();
+    private final Map<UUID, Flying> inFlight = new HashMap<>();
 
     public PowerService(Plugin plugin, EventQueue queue, CommandRunner runner, Logger log) {
         this.plugin = plugin;
@@ -110,7 +121,8 @@ public final class PowerService implements Listener {
      * will invent the same word again.
      */
     public record Granted(String error, String name, List<String> switches,
-                          List<String> triggers, String projectile, List<String> unknown) { }
+                          List<String> triggers, String projectile, List<String> unknown,
+                          List<String> holding, boolean replaced) { }
 
     /**
      * Gives a player an ability described by the model.
@@ -127,7 +139,7 @@ public final class PowerService implements Listener {
         Player player = Bukkit.getPlayerExact(playerName);
         if (player == null) {
             return new Granted("no player called " + playerName + " is here",
-                    null, List.of(), List.of(), null, List.of());
+                    null, List.of(), List.of(), null, List.of(), List.of(), false);
         }
         List<String> unknown = new ArrayList<>();
         Ability ability = new Ability();
@@ -157,7 +169,8 @@ public final class PowerService implements Listener {
             }
             ability.scripts.put(trigger, List.copyOf(entry.getValue()));
         }
-        if (ability.projectile != null && entityType(ability.projectile) == null) {
+        if (ability.projectile != null && entityType(ability.projectile) == null
+                && blockType(ability.projectile) == null) {
             unknown.add("projectile:" + ability.projectile);
             ability.projectile = null;
         }
@@ -168,6 +181,11 @@ public final class PowerService implements Listener {
             fresh.walkSpeedBefore = player.getWalkSpeed();
             return fresh;
         });
+        // Granting a name that is already held REPLACES it. "Make my arrow power fully
+        // automatic" is an edit, and stacking a second ability beside the first leaves the
+        // player holding both — the old one still firing, the change apparently ignored.
+        boolean replaced = holder.abilities.removeIf(
+                existing -> existing.name.equalsIgnoreCase(ability.name));
         holder.abilities.add(ability);
         applySwitches(player);
 
@@ -176,10 +194,18 @@ public final class PowerService implements Listener {
                 + ability.switches + " triggers=" + ability.scripts.keySet()
                 + (ability.projectile == null ? "" : " projectile=" + ability.projectile));
         return new Granted(null, ability.name, List.copyOf(ability.switches),
-                List.copyOf(ability.scripts.keySet()), ability.projectile, unknown);
+                List.copyOf(ability.scripts.keySet()), ability.projectile, unknown,
+                current(playerName), replaced);
     }
 
-    /** Re-asserts every switch a player's abilities imply. */
+    /**
+     * Settles every switch to exactly what the player's abilities currently imply.
+     *
+     * <p>Idempotent, and the single authority on these, so replacing one ability with
+     * another needs no reset first. An earlier version cleared everything and rebuilt it,
+     * which took flight away and gave it back inside one tick — long enough to drop
+     * somebody who was in the air when their power was edited.
+     */
     private void applySwitches(Player player) {
         Held holder = held.get(player.getUniqueId());
         if (holder == null) {
@@ -198,18 +224,21 @@ public final class PowerService implements Listener {
                     try {
                         walk = Float.parseFloat(flag.substring("walk_speed:".length()));
                     } catch (NumberFormatException ignored) {
-                        // a malformed number is not worth refusing the whole ability over
+                        // A malformed number is not worth refusing the whole ability over.
                     }
                 }
             }
         }
         if (fly) {
             player.setAllowFlight(true);
+        } else if (!holder.couldFlyBefore && player.getGameMode() != GameMode.CREATIVE
+                && player.getGameMode() != GameMode.SPECTATOR) {
+            player.setAllowFlight(false);
+            player.setFlying(false);
         }
         player.setGlowing(glow);
-        if (walk != null) {
-            player.setWalkSpeed(Math.max(-1f, Math.min(1f, walk)));
-        }
+        player.setWalkSpeed(Math.max(-1f, Math.min(1f,
+                walk != null ? walk : holder.walkSpeedBefore)));
     }
 
     /** Takes an ability back by name, or everything when no name is given. */
@@ -230,8 +259,8 @@ public final class PowerService implements Listener {
             removed.add(ability.name);
             return true;
         });
-        restore(player, holder);
         if (holder.abilities.isEmpty()) {
+            restore(player, holder);
             held.remove(player.getUniqueId());
         } else {
             applySwitches(player);
@@ -279,7 +308,6 @@ public final class PowerService implements Listener {
                     continue;
                 }
                 if (expired) {
-                    restore(player, holder);
                     applySwitches(player);
                 }
                 for (Ability ability : holder.abilities) {
@@ -297,6 +325,7 @@ public final class PowerService implements Listener {
             }
         }
         due.forEach(Runnable::run);
+        watchFlights();
     }
 
     /**
@@ -344,22 +373,27 @@ public final class PowerService implements Listener {
     /**
      * Throws something along the line of sight.
      *
-     * <p>The one thing commands genuinely cannot do. A summoned entity's motion is written in
-     * world axes, so a fireball from {@code /summon} flies the same way whichever way you are
-     * facing; aiming has to happen where the player's direction is known.
+     * <p>The one thing commands genuinely cannot do. A summoned entity's motion is written
+     * in world axes, so a fireball from {@code /summon} flies the same way whichever way you
+     * are facing; aiming has to happen where the player's direction is known.
+     *
+     * <p>A block name throws the block itself, falling. "Launch an anvil" is a reasonable
+     * thing to ask for and there is no anvil entity, so the two namespaces are both tried
+     * and the block one wins whatever is left over.
      */
     private void launch(Player player, Ability ability) {
-        EntityType type = entityType(ability.projectile);
-        if (type == null) {
-            return;
-        }
         Vector aim = player.getEyeLocation().getDirection().normalize();
+        Location from = player.getEyeLocation().add(aim.clone().multiply(1.4));
+        EntityType type = entityType(ability.projectile);
+        Material block = type == null ? blockType(ability.projectile) : null;
         Entity thrown;
         try {
-            thrown = player.getWorld().spawnEntity(
-                    player.getEyeLocation().add(aim.clone().multiply(1.4)), type);
+            thrown = block != null
+                    ? player.getWorld().spawn(from, FallingBlock.class,
+                            falling -> falling.setBlockData(block.createBlockData()))
+                    : player.getWorld().spawnEntity(from, type);
         } catch (IllegalArgumentException notSpawnable) {
-            // A real entity name is not the same as a spawnable one. Refusing quietly beats
+            // A real name is not the same as a spawnable one. Refusing quietly beats
             // throwing on every click for as long as the power is held.
             log.info("cannot throw " + ability.projectile + ": " + notSpawnable.getMessage());
             ability.projectile = null;
@@ -374,6 +408,89 @@ public final class PowerService implements Listener {
         } else {
             thrown.setVelocity(aim.multiply(ability.speed));
         }
+        if (ability.scripts.containsKey("on_hit")) {
+            inFlight.put(thrown.getUniqueId(),
+                    new Flying(player.getUniqueId(), ability.name, Bukkit.getCurrentTick()));
+        }
+    }
+
+    /**
+     * Runs what was hung on {@code on_hit}, where the thing came down.
+     *
+     * <p>"Make the pigs explode on impact" has no other answer. There is no trigger on the
+     * player for it: the interesting moment happens to something they threw, somewhere they
+     * are not, possibly after they have looked away.
+     */
+    private void landed(Entity thrown, Location where) {
+        Flying flight = inFlight.remove(thrown.getUniqueId());
+        if (flight == null || where.getWorld() == null) {
+            return;
+        }
+        List<String> script;
+        synchronized (this) {
+            Held holder = held.get(flight.owner());
+            if (holder == null) {
+                return;
+            }
+            script = holder.abilities.stream()
+                    .filter(ability -> ability.name.equals(flight.ability()))
+                    .map(ability -> ability.scripts.get("on_hit"))
+                    .filter(java.util.Objects::nonNull)
+                    .findFirst().orElse(null);
+        }
+        if (script != null && !script.isEmpty()) {
+            runner.submitAt(script, where);
+        }
+    }
+
+    /**
+     * A projectile striking something is the exact moment, when the game reports one.
+     *
+     * <p>Only projectiles get this event, which is why the tick loop watches the rest: a
+     * thrown pig is an ordinary animal with velocity on it and lands without telling anyone.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onProjectileHit(ProjectileHitEvent event) {
+        if (inFlight.containsKey(event.getEntity().getUniqueId())) {
+            landed(event.getEntity(), event.getEntity().getLocation());
+        }
+    }
+
+    /** Everything else: it has landed when it is resting on something, or it is gone. */
+    private void watchFlights() {
+        long now = Bukkit.getCurrentTick();
+        for (UUID id : List.copyOf(inFlight.keySet())) {
+            Flying flight = inFlight.get(id);
+            Entity thrown = Bukkit.getEntity(id);
+            if (thrown == null || !thrown.isValid()) {
+                // Gone: it burned up, despawned, or a falling block already became a block.
+                // Where it last was is the best answer available, and it is the right one.
+                if (thrown != null) {
+                    landed(thrown, thrown.getLocation());
+                } else {
+                    inFlight.remove(id);
+                }
+                continue;
+            }
+            if (thrown.isOnGround()) {
+                landed(thrown, thrown.getLocation());
+                continue;
+            }
+            if (flight != null && now - flight.since() > FLIGHT_TIMEOUT_TICKS) {
+                // Something that never comes down: shot into the void, or riding a boat.
+                inFlight.remove(id);
+            }
+        }
+    }
+
+    /** The block behind a name, for the things there is no entity for. */
+    private static Material blockType(String name) {
+        if (name == null) {
+            return null;
+        }
+        Material material = Material.matchMaterial(
+                name.toLowerCase(Locale.ROOT).trim().replace(' ', '_'));
+        return material != null && material.isBlock() ? material : null;
     }
 
     private static EntityType entityType(String name) {
@@ -484,6 +601,9 @@ public final class PowerService implements Listener {
 
     /** What a player holds, for status and for the god to read back. */
     public synchronized List<String> current(String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return List.of();
+        }
         Player player = Bukkit.getPlayerExact(playerName);
         if (player == null) {
             return List.of();

@@ -10,6 +10,7 @@ import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -66,8 +67,14 @@ public final class CommandRunner {
         }
     }
 
-    /** One command waiting its turn, where to run it from, and the batch it belongs to. */
-    private record Pending(String command, String anchor, Batch batch) { }
+    /**
+     * One command waiting its turn, where to run it from, and the batch it belongs to.
+     *
+     * <p>{@code at} is a place rather than a person, for the things that happen somewhere
+     * nobody is standing: where a thrown pig came down, where an arrow struck. Only one of
+     * the two is ever set.
+     */
+    private record Pending(String command, String anchor, Location at, Batch batch) { }
 
     /** A repeating effect: the same commands, every so often, until it has run its course. */
     private static final class Spell {
@@ -121,7 +128,7 @@ public final class CommandRunner {
                                    Consumer<List<Outcome>> done) {
         Batch batch = done == null ? null : new Batch(commands.size(), done);
         for (String command : commands) {
-            pending.add(new Pending(command, anchor, batch));
+            pending.add(new Pending(command, anchor, null, batch));
         }
         start();
         return pending.size();
@@ -129,6 +136,21 @@ public final class CommandRunner {
 
     public synchronized int submit(List<String> commands, String anchor) {
         return submit(commands, anchor, null);
+    }
+
+    /**
+     * Queues commands to run at a place instead of from a player.
+     *
+     * <p>What an impact needs. The thing that landed is not a player and may be gone by the
+     * time anyone reads about it, so the position is copied now and the commands run
+     * against it, which is what makes {@code ~ ~ ~} mean "here, where this happened".
+     */
+    public synchronized int submitAt(List<String> commands, Location where) {
+        for (String command : commands) {
+            pending.add(new Pending(command, null, where.clone(), null));
+        }
+        start();
+        return pending.size();
     }
 
     /**
@@ -146,7 +168,7 @@ public final class CommandRunner {
         spell.task = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
             synchronized (this) {
                 for (String command : spell.commands) {
-                    pending.add(new Pending(command, spell.anchor, null));
+                    pending.add(new Pending(command, spell.anchor, null, null));
                 }
                 spell.remaining -= spell.every;
                 if (spell.remaining <= 0) {
@@ -210,7 +232,7 @@ public final class CommandRunner {
             }
         }
         for (Pending item : batch) {
-            Outcome outcome = run(item.command(), item.anchor());
+            Outcome outcome = run(item.command(), item.anchor(), item.at());
             Batch owner = item.batch();
             if (owner == null) {
                 continue;
@@ -238,16 +260,19 @@ public final class CommandRunner {
      * {@code execute} available: the model may say "ten blocks above me", it may not say
      * "as the server, run anything".
      */
-    private Outcome run(String command, String anchor) {
+    private Outcome run(String command, String anchor, Location at) {
         StringBuilder feedback = new StringBuilder();
         boolean ok;
         String dispatched = command;
         try {
-            if (anchor != null && !anchor.isBlank()) {
+            if (at != null) {
+                dispatched = "execute in " + at.getWorld().getKey() + " positioned "
+                        + at.getX() + " " + at.getY() + " " + at.getZ() + " run " + command;
+            } else if (anchor != null && !anchor.isBlank()) {
                 Player player = Bukkit.getPlayerExact(anchor);
                 if (player == null) {
                     String missing = "no player called " + anchor + " is here";
-                    record(command, anchor, false, missing);
+                    record(command, anchor, at, false, missing);
                     return new Outcome(command, false, missing);
                 }
                 dispatched = "execute as " + anchor + " at " + anchor + " run " + command;
@@ -265,7 +290,7 @@ public final class CommandRunner {
             feedback.append(failure.getClass().getSimpleName()).append(": ")
                     .append(String.valueOf(failure.getMessage()));
         }
-        record(command, anchor, ok, feedback.toString());
+        record(command, anchor, at, ok, feedback.toString());
         return new Outcome(command, ok, feedback.toString());
     }
 
@@ -278,13 +303,17 @@ public final class CommandRunner {
      * was standing. Recording the anchor's position turns the god's acts into something it
      * can find again.
      */
-    private void record(String command, String anchor, boolean ok, String output) {
+    private void record(String command, String anchor, Location at, boolean ok,
+                        String output) {
         if (!ok) {
             log.info("god failed /" + command + (output.isBlank() ? "" : "  " + output));
         }
         int[] where = {0, 0, 0};
         String dim = Dims.of(Bukkit.getWorlds().get(0));
-        if (anchor != null && !anchor.isBlank()) {
+        if (at != null) {
+            where = Dims.pos(at);
+            dim = Dims.of(at.getWorld());
+        } else if (anchor != null && !anchor.isBlank()) {
             Player player = Bukkit.getPlayerExact(anchor);
             if (player != null) {
                 where = Dims.pos(player.getLocation());

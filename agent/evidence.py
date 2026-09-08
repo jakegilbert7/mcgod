@@ -100,18 +100,22 @@ POWER_TOOL = {
         "from: you write what the power DOES, and the server binds it to a gesture.\n"
         "An ability is three things, and you may use any combination:\n"
         "  scripts  - commands to run when the player does something. The triggers are "
-        "on_use (either mouse button), on_sneak, on_move, on_attack, on_damaged, and "
+        "on_use (either mouse button), on_sneak, on_move, on_attack (they hit something "
+        "themselves), on_damaged, on_hit (something they THREW landed or struck), and "
         "every (with `every` set to a tick interval). Commands run anchored to the "
         "player, so `~ ~ ~` is where they stand and `^ ^ ^5` is five blocks ahead of "
-        "where they are LOOKING. That is how you aim anything.\n"
+        "where they are LOOKING. That is how you aim anything. The exception is on_hit, "
+        "whose commands run where the thrown thing came down, which is the only way to "
+        "make something happen somewhere the player is not.\n"
         "  switches - the things a command cannot say: fly (flight without creative "
         "mode, so they keep inventory, hunger and damage), no_fall, glow, "
         "immune:<cause> (fire, lava, explosion, drowning, or all), walk_speed:<n> "
         "(0.2 is normal, 0.6 is very fast).\n"
-        "  projectile - an entity thrown along the line of sight on use, aimed where "
-        "they look, which a summon command cannot do. Any entity id: small_fireball, "
-        "fireball, wind_charge, arrow, snowball, trident, breeze_wind_charge, even a "
-        "tnt or a cow. `speed` sets how hard it is thrown, default 1.6.\n"
+        "  projectile - a thing thrown along the line of sight on use, aimed where they "
+        "look, which a summon command cannot do. Any entity id (small_fireball, arrow, "
+        "snowball, trident, wind_charge, tnt, even a cow) or any BLOCK, thrown falling, "
+        "so anvil and bell and pointed_dripstone all work. `speed` sets how hard it is "
+        "thrown, default 1.6.\n"
         "Examples of the shape, not a menu:\n"
         "  a web shooter -> scripts {on_use: [\"setblock ^ ^ ^4 cobweb\"]}\n"
         "  frozen wake -> scripts {on_move: [\"setblock ~ ~-1 ~ packed_ice\"]}\n"
@@ -120,14 +124,23 @@ POWER_TOOL = {
         "\"execute at @s run tp @s ~ ~1 ~\"]}, switches [no_fall]\n"
         "  meteor storm -> every 10, scripts {every: [\"summon fireball ~ ~30 ~ "
         "{power:[0.0,-1.0,0.0]}\"]}\n"
+        "  exploding pigs -> projectile pig, scripts {on_hit: [\"summon tnt ~ ~ ~ "
+        "{fuse:1s}\"]}. on_hit is the ONLY way to act where a thrown thing landed; "
+        "on_attack is the player swinging at something, which is a different event.\n"
         "Prefer this over creative mode and a stack of items. Creative is not a "
         "superpower, it is a different game, and a fire charge you have to throw by hand "
         "is not what anyone means by throwing fire.\n"
-        "`name` is what the power is called, so it can be taken back by name. `duration` "
-        "is in ticks (20 a second); leave it out to hold until taken away. `cooldown_ms` "
-        "throttles a trigger that would otherwise fire many times a second; on_move and "
-        "on_use fire constantly, so set it unless you want a dense trail. To take an "
-        "ability away, set revoke with the name, or revoke with no name for all of them.\n"
+        "CHANGING AND REMOVING. `name` identifies the power. Granting a name that is "
+        "already held REPLACES it, and that is how you edit one: to make an existing "
+        "power automatic or stronger or different, grant it again under its EXISTING "
+        "name carrying the whole definition you want. Never invent a second name beside "
+        "it, or the old one keeps firing. You are told which powers the player is "
+        "holding; use those names exactly. To remove one, set revoke with its name; to "
+        "remove everything, set revoke with no name at all.\n"
+        "`duration` is in ticks (20 a second); leave it out to hold until taken away. "
+        "`cooldown_ms` throttles a trigger that would otherwise fire many times a "
+        "second; on_move and on_use fire constantly, so set it unless you want a dense "
+        "trail, and set it to 0 for anything meant to be fully automatic.\n"
         "Tell the player which gesture works it."
     ),
     "input_schema": {
@@ -147,7 +160,7 @@ POWER_TOOL = {
             "cooldown_ms": {"type": "integer", "minimum": 0},
             "revoke": {"type": "boolean"},
         },
-        "required": ["player", "name"],
+        "required": ["player"],
         "additionalProperties": False,
     },
 }

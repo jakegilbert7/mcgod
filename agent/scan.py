@@ -144,7 +144,8 @@ def to_voxels(result: dict) -> dict:
 
 #: The triggers and switches an ability may be built from. The plugin is authoritative;
 #: this is the vocabulary the model is shown, so an invented word comes back named.
-TRIGGERS = ("on_use", "on_sneak", "on_move", "on_attack", "on_damaged", "every")
+TRIGGERS = ("on_use", "on_sneak", "on_move", "on_attack", "on_damaged", "on_hit",
+            "every")
 SWITCHES = ("fly", "no_fall", "glow", "immune:", "walk_speed:")
 
 
@@ -171,6 +172,18 @@ async def grant_power(player: str, name: str, url: str = DEFAULT_URL, *,
         "projectile": projectile, "speed": float(speed),
         "every": int(every), "duration": int(duration), "cooldown_ms": int(cooldown_ms),
     }, "power_result", timeout)
+
+
+async def held_powers(player: str, url: str = DEFAULT_URL,
+                      timeout: float = 10.0) -> dict:
+    """What a player is holding right now, named.
+
+    The god cannot change or take back what it cannot see. Asked to make an existing power
+    automatic while blind to its name, it invented a second power beside the first and left
+    both running.
+    """
+    return await request_rpc(url, {"rpc": "held_powers", "player": player},
+                             "power_result", timeout)
 
 
 async def stop_commands(url: str = DEFAULT_URL, spell: str | None = None,
