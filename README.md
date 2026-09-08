@@ -23,22 +23,35 @@ god: [grants flight, fireball, fire immunity, a flame trail]
 
 ## How it works
 
-Seven layers, each of which only trusts the one below it.
+```
+Paper events ─► bounded queue ─► JSONL session files
+                     │
+                     ▼
+              one WebSocket ──► live ingestion ──► event_history + indexes
+                     │
+                     └──► RPC: scans, voxels, seed queries, speech,
+                              commands, powers
+                                        │
+                                        ▼
+                              SQLite belief store
+                                        │
+                     ┌──────────────────┴──────────────────┐
+                     ▼                                     ▼
+              chat evidence loop                    dirty-region upkeep
+              SQL / tools / narration               scan, segment, publish
+```
 
-| | |
-|---|---|
-| **L0 capture** | 45 event types from a Paper plugin: block work, movement, combat, containers, vehicles, chat. Listeners push to a bounded queue and return; a daemon thread serialises and ships. A full queue drops events rather than stalling the server. |
-| **L1 episodes** | Deterministic clustering of activity in space and time. A boundary falls where something measurably changed, never where a model said so. |
-| **L2 primitives** | About twenty generic detectors that emit facts and never labels. Structure census, rate anomaly against a rolling baseline, firsts, risk profile. |
-| **L3 store** | SQLite. Every row carries `value, confidence, provenance, first_seen, verified_at, source_event_ids`. |
-| **L4 reconciliation** | Confidence decays on read by half-life; events contradict the beliefs they disprove; a named place is verified before it is spoken about. |
-| **L5 context** | Hard token budget per section, enforced by truncation. Retrieval by salience, never dumping. |
-| **L6 the god** | Trigger router with interrupt, queued and ambient lanes. Cheap model for triage, strong model for dialogue and judgment. |
-| **L7 actions** | Commands, granted powers, and builds — gated in the server, never in the agent. |
+Capture is dumb and fast. Listeners build a record, push it to a bounded queue, and return;
+a daemon thread serialises and ships. A full queue drops events rather than stalling the
+server, because the game stuttering is always worse than losing an event. Over forty event
+types are captured: block work, movement, combat, containers, crafting, vehicles, chat, and
+the god's own acts.
 
 ### Provenance is the whole design
 
-Every belief records where it came from, and the order is load-bearing:
+Every row in the store carries `value, confidence, provenance, first_seen_tick,
+verified_at_tick, verified_at_ms, source_event_ids`, and the provenance order is
+load-bearing:
 
 | | | assertable as fact? |
 |---|---|---|
@@ -48,41 +61,111 @@ Every belief records where it came from, and the order is load-bearing:
 | `INFERRED` | a model's judgement | only above a confidence threshold |
 | `ASSERTED` | something the god itself said | **never** |
 
-`ASSERTED` can never be promoted, enforced by a database trigger rather than by convention, so
-no future caller can route around it. Without that rule the god reads back its own speculation
-as evidence and one confident guess becomes permanent canon.
+`ASSERTED` can never be promoted, enforced by a database trigger rather than by convention,
+so no future caller can route around it. Without that rule the god reads back its own
+speculation as evidence and one confident guess becomes permanent canon.
 
-### What the god knows
+Sixteen tables hold the world. The important separation is between what *happened*
+(`event_history`, `work_events`, `episodes`, `activities`), what *stands* (`masses`,
+`structures`, `generated_features`), and what the god merely *said* (`utterances`).
+Confidence decays on read by a half-life chosen per kind of fact — twenty minutes for a
+count of animals in a pen, fourteen days for a building's geometry — and decay never
+rewrites what was measured.
 
-Structures are decided in two tiers. A **ledger** (`masses`) is deterministic and complete:
-every connected mass of built blocks in ground that has been read is a row, whatever its size
-and whoever made it — houses, scaffolding pillars, torch lines, village walls. Authorship is
-established by replaying the latest block mutation at every coordinate against what stands
-there now. A **landmark** (`structures`) is a named grouping of masses, drawn by a vision model
-from rendered and coordinate-bearing views.
+### What stands: two tiers
+
+A **ledger** (`masses`) is deterministic and complete. Every connected mass of built blocks
+in ground that has been read is a row, whatever its size and whoever made it: houses,
+scaffolding pillars, torch lines, village walls. Authorship comes from replaying the latest
+block mutation at every coordinate and comparing it with what stands there now, so a mass
+nobody was watching being built has an unknown builder and says so.
+
+A **landmark** (`structures`) is a named grouping of masses, with boundaries drawn by a
+vision model from rendered views, coordinate-bearing slice grids, and the measured geometry
+code already extracted. Code clips and measures every proposal, refuses one that is empty or
+runs off the edge of what was read, and matches identity to prior objects by geometry rather
+than by name.
 
 The model decides what deserves a name. It never decides what exists.
 
-Questions go through one model-directed evidence loop: the model writes bounded read-only SQL
-against a table allowlist, may render the world or query the seed, and narrates what it found.
-There are no phrase gates and no canned answers.
+### Asking it things
 
-### What the god does not need to visit
+One model-directed evidence loop answers everything. The model decides whether a question is
+about the player's past, about what the world contains, or neither; writes bounded read-only
+SQL against a table allowlist; may render the world, inspect entities, or query the seed; and
+narrates what it found. There are no phrase gates and no canned answers. Both the loop and
+every individual model call are bounded by wall clock, because a stalled provider is
+indistinguishable from the thing being down.
 
-Minecraft's generation is a pure function of the seed, so the whole world is computable without
-going there. `seedmap.py` binds [cubiomes](https://github.com/Cubitect/cubiomes) (MIT, vendored)
-carried to 26.2 by a port of the game's own biome search read out of the server jar's bytecode.
-Measured against the live server: 46,315 sample points across all three dimensions, zero
-mismatches. That is what makes "how many villages within 10,000 blocks" answerable in
-milliseconds when the server itself can only find the nearest one.
+### Acting on it
+
+Three tools, gated in the server rather than in the agent, because the thing drafting is a
+language model:
+
+- **`act_on_world`** runs Minecraft commands, any number of them, optionally anchored to a
+  player so `~` means what it means in game, and optionally repeating for a duration. An
+  allowlist decides what may run; nothing that grants permission, removes a player, changes
+  server settings or prints to chat is on it. Work is drained a bounded number per tick, so
+  the request is unbounded but the pace is not.
+- **`grant_power`** gives abilities no command can express: flight without creative mode, a
+  fireball from an empty hand, immunity to your own fire, particle trails. Held per player
+  with an expiry, restoring what was there before.
+- **`design_build`** asks a separate build model for the commands that make a shape, because
+  holding a figure in mind is a different skill from conversation.
+
+All three live inside the same loop as the observation tools, so the god can act, look at
+what happened, and put it right before it says anything. `/mcgod stop` cancels everything.
+
+### What it knows without going there
+
+Minecraft's generation is a pure function of the seed, so the whole world is computable
+without visiting it. `seedmap.py` binds [cubiomes](https://github.com/Cubitect/cubiomes)
+(MIT, vendored) carried to 26.2 by porting the game's own biome search out of the server
+jar's bytecode. Measured against a live server: 46,315 sample points across all three
+dimensions, zero mismatches. That is what makes "how many villages within 10,000 blocks"
+answerable in milliseconds when the server itself can only find the nearest one.
 
 ### Rendering
 
-A software renderer with perspective, z-buffering and textures read from the local client jar.
-Block geometry comes from the game's own model JSON rather than from block names, so a fence is
-a post with arms and a stair roof reads as a roof. Entity geometry is extracted by walking the
-bytecode of the game's `createBodyLayer()` methods, because entity models ship as Java rather
-than as data.
+A software renderer with perspective, z-buffering and textures read from the local client
+jar. Block geometry comes from the game's own model JSON rather than from block names, so a
+fence is a post with arms and a stair roof reads as a roof. Entity geometry is extracted by
+walking the bytecode of the game's `createBodyLayer()` methods, because entity models ship as
+Java rather than as data.
+
+## The code
+
+**Agent** (`agent/`)
+
+| | |
+|---|---|
+| `god.py` | the live loop: startup sync, chat, the act-and-observe loop, quests, upkeep |
+| `store.py` | SQLite schema, belief envelopes, provenance, decay, migrations |
+| `history.py` | model-directed read-only SQL and the evidence tool loop |
+| `masses.py` | the ledger of every built thing: measure, attribute, identity, roles |
+| `structures.py` | canonical landmark identity, authorship, generated-world separation |
+| `segment.py` | what counts as a structure, decided from the world not the event log |
+| `grounding.py` | resolving what a question refers to, and spatial facts about it |
+| `context.py` | context assembly under hard per-section token budgets |
+| `activity.py` `episodes.py` `world.py` `detectors.py` | the deterministic layers: deed index, activity clustering, derived player state, and five fact-emitting detectors |
+| `reconcile.py` | scan queue, dirty regions, verify-before-speaking |
+| `seedmap.py` `environment.py` | the world from the seed, offline and via the server |
+| `commands.py` `builder.py` `evidence.py` | what may be run, the build model, the shared tools |
+| `quests.py` `router.py` | quest specs and watchers; interrupt / queued / ambient triage |
+| `render.py` `assets.py` `entity_models.py` `render_structures.py` | the renderer and its inputs |
+| `scan.py` `bridge.py` `consumer.py` `replay.py` | the wire: RPC, live stream, replay harness |
+| `model_api.py` `config.py` | provider boundary for Anthropic and OpenRouter |
+| `test_regression.py` | 294 offline tests |
+| `cubiomes/` | vendored cubiomes, patched to 26.2 — see its `PROVENANCE.md` |
+
+Also `classify.py`, `eval_segment.py`, `compare_models.py`, `survey.py`, `summary.py`,
+`narrate.py` and `fakegod.py`: evaluation and one-off tools, not on the live path.
+
+**Plugin** (`plugin/`) — a Paper plugin in about thirty classes. Listeners for blocks,
+entities, players, inventories, vehicles, trades, chat and the world; `EventQueue` and
+`EventDispatcher` behind them; `JsonlSink` and `WebSocketSink` in front; `ScanService` for
+region and voxel reads, `EnvironmentService` for seed queries, `CommandService` and
+`CommandRunner` for acting, `PowerService` for abilities.
 
 ## Running it
 
@@ -99,15 +182,9 @@ cp .env.example .env                   # then add your key
 .venv/bin/python god.py
 ```
 
-Then talk to it in chat.
-
-### The corpus
-
-Forty-two of the tests replay recorded sessions, and those recordings are not in this
-repository: a session file is a play-by-play of somebody's game with their player UUID on
-every line. Without one those tests skip and the other 252 run. Play with the plugin
-installed, then copy a file from `server/plugins/McGod/events/` into
-`agent/sessions/corpus/`, and they all run against your own world.
+Then talk to it in chat. Models are configured in `agent/.env`; the dialogue, classification,
+vision, build and segmentation roles are separate variables so each can be swapped and
+measured on its own.
 
 ```bash
 .venv/bin/python test_regression.py    # 252 offline tests; no server, no API key
@@ -116,6 +193,14 @@ installed, then copy a file from `server/plugins/McGod/events/` into
 .venv/bin/python render_structures.py --check
 ```
 
+### The corpus
+
+Forty-two of the 294 tests replay recorded sessions, and those recordings are not in this
+repository: a session file is a play-by-play of somebody's game with their player UUID on
+every line. Without one those tests skip and the other 252 run. Play with the plugin
+installed, then copy a file from `server/plugins/McGod/events/` into
+`agent/sessions/corpus/`, and the whole suite runs against your own world.
+
 ## Notes on the engineering
 
 A few decisions that were not obvious and cost something to learn:
@@ -123,28 +208,33 @@ A few decisions that were not obvious and cost something to learn:
 - **Net deltas, not gross counts.** A player who places 500 blocks and breaks 490 has built
   nothing. Gross counting is the likeliest source of a god confidently describing a structure
   that is not there.
-- **Absence of evidence is refused.** A scan that finds nothing where a structure was believed
-  to stand is a failed read, not a demolition. The same trap appears in half a dozen places.
-- **Where a pipeline and its measurement share state, the measurement flatters the pipeline.**
-  The segmentation evaluator seeded its truth from the store and so scored itself; it reported
-  a perfect box for doing nothing.
-- **A model that gates existence will delete things.** Segmentation once decided what was real,
-  so anything it declined to name had no present-tense record at all, and 47% of block events
-  could not be attached to any place.
-- **Never block the tick.** Commands are queued and drained a bounded number per tick; the
-  request is unbounded, the pace is not.
+- **Absence of evidence is refused.** A scan that finds nothing where a structure was
+  believed to stand is a failed read, not a demolition. The same trap appears in half a dozen
+  places, and it is why an empty result never retires anything on its own.
+- **Where a pipeline and its measurement share state, the measurement flatters the
+  pipeline.** The segmentation evaluator seeded its truth from the store and so scored
+  itself; it reported a perfect box for doing nothing.
+- **A model that gates existence will delete things.** Segmentation once decided what was
+  real, so anything it declined to name had no present-tense record at all, and 47% of block
+  events could not be attached to any place. Hence the ledger beneath the landmarks.
+- **Saying what was accepted is not saying what happened.** A command queued is not a command
+  that worked, and a command that reports success can still have changed nothing.
+- **Never block the tick.** Everything the server does for the god is paced: scans are
+  chunked, commands are drained a bounded number per tick, and the renderer runs off the
+  event loop.
 
 ## Layout
 
 ```
-agent/      the Python side: capture consumers, world model, retrieval, rendering, the god
-  cubiomes/ vendored cubiomes (MIT), patched to 26.2 — see its PROVENANCE.md
-plugin/     the Paper plugin: capture, scans, seed queries, commands, powers
-server/     local server (not in this repository)
+agent/      the Python side
+  cubiomes/ vendored cubiomes (MIT), patched to 26.2
+plugin/     the Paper plugin
+server/     your local server — not in this repository
 ```
 
-`HANDOFF-2026-09-07.md` is the operational snapshot. `SESSION-2026-09-07.md` is the development
-log, and is the honest one: it records what broke and why, which is most of what was learned.
+`HANDOFF-2026-09-07.md` is the operational snapshot and the place to start.
+`SESSION-2026-09-07.md` is the development log, and is the honest one: it records what broke
+and why, which is most of what was learned.
 
 ## Licence
 
