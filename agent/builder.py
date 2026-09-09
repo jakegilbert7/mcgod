@@ -58,9 +58,29 @@ Both grids run west to east across a row (increasing X) and north to south down 
 (increasing Z), and the corner coordinate is given so you can turn any cell into real
 coordinates.
 
+Curves, which are most of what separates a good build from a bad one. Minecraft has no
+curves, so a round thing is a stack of circles and you have to work out each one:
+
+- For a sphere or a balloon of radius R centred at height Yc, the layer at height y has
+  radius r = sqrt(R^2 - (y - Yc)^2). Compute that for EVERY layer before you write any
+  commands, and write the layers out widest-first so you can see the profile you are making.
+  A balloon of R=9 goes 0, 4.0, 5.6, 6.7, 7.5, 8.1, 8.5, 8.8, 9.0 and back down. Guessing
+  instead gives you a barrel with a lid, which is the single most common way a build fails.
+- Draw each circle properly: a block at (x, z) is in the layer when x^2 + z^2 <= r^2, using
+  the layer's own r. Do not reuse one circle at several heights.
+- A dome is the top half of that. A cone or a spire shrinks linearly instead. A teardrop or
+  a balloon envelope is a sphere that tapers to a neck over its bottom third.
+- Never approximate a curve with a single `fill`. Fill the straight RUNS inside each circle,
+  one per row of the circle, which is both round and cheap.
+
+Scale. Build it as big as it was asked for. A "large" figure or vehicle is 15-25 blocks in
+its longest dimension, a monumental one 30-50. Small builds read as models of the thing
+rather than the thing, and detail you cannot fit in is worse than no detail.
+
 How to build well:
 - Work in absolute coordinates from the anchor you were given. The anchor is the point the
-  thing stands on, at its centre unless told otherwise.
+  thing stands on, at its centre unless told otherwise. Something described as floating or
+  in the air hangs from the anchor rather than resting on it.
 - Sit it on the ground the height grid describes. A figure floating two blocks up, or buried
   to the knee in a slope, is the most common way for a good shape to look wrong, and it is
   the one thing the survey exists to prevent. On a slope, either step the footing down to
@@ -80,6 +100,11 @@ How to build well:
 Take the room you need. There is no penalty for a long answer and a large one is expected:
 several hundred commands for a figure is normal, and stopping early leaves a half-built
 thing standing in somebody's world.
+
+Work out the shape before you write the commands. State the overall dimensions and, for
+anything rounded, the radius of each layer. Then write the commands, and check the count
+against what you planned: a large detailed build is several hundred commands, and a hundred
+means you left most of it out.
 
 Reply as JSON only:
 {"commands": ["setblock 100 64 100 minecraft:stone", ...],

@@ -5051,6 +5051,90 @@ class TheGodMayAct(unittest.TestCase):
                         source.index('elif acted["failures"]:'),
                         "the refused-speech case must be tested before the general one")
 
+    def test_a_build_is_placed_rather_than_handed_back(self):
+        """The builder returned 275 commands for a hot air balloon and 4 reached the
+        world: the list went back to the dialogue model, which had to retype it into
+        act_on_world, and a build does not fit inside a reply. The player got the gondola
+        floor and nothing above it."""
+        import asyncio
+        import inspect
+
+        from god import God
+
+        source = inspect.getsource(God.design_build)
+        self.assertIn("await self.run_commands(", source,
+                      "the build is placed here, not by the model")
+
+        store = Store(":memory:")
+        try:
+            g = God(store, use_model=False)
+            import builder
+            original = builder.design
+            wrote = [f"setblock {i} 64 0 minecraft:stone" for i in range(275)]
+            async def designed(*a, **k):
+                return {"commands": wrote, "describes": "a balloon", "count": len(wrote)}
+            builder.design = designed
+            ran = {}
+            async def running(data, actor=None):
+                ran["count"] = len(data["commands"])
+                return {"done": list(data["commands"]), "failures": [], "queued": 0,
+                        "spell": None}
+            g.run_commands = running
+            async def no_voxels(*a, **k):
+                return {"ok": False, "error": "no server"}
+            import god as gm
+            saved = gm.request_voxels
+            gm.request_voxels = no_voxels
+            try:
+                out = asyncio.run(g.design_build({"what": "a balloon", "x": 0, "y": 64,
+                                                  "z": 0}))
+            finally:
+                gm.request_voxels = saved
+                builder.design = original
+            self.assertEqual(ran["count"], 275, "every command reaches the world")
+            self.assertEqual(out["placed"], 275)
+            self.assertNotIn("commands", out,
+                             "handing the list back is what lost 271 of them")
+        finally:
+            store.close()
+
+    def test_a_provider_that_says_wait_is_waited_for(self):
+        """A build died to a 402 carrying Retry-After 120 that we asked again 0.4 seconds
+        later, spending the second attempt on the same refusal."""
+        from evidence import MAX_RETRY_AFTER_SECONDS, _retry_after
+
+        class Response:
+            headers = {"Retry-After": "120"}
+
+        class FromHeader(Exception):
+            response = Response()
+
+        class FromBody(Exception):
+            body = {"error": {"metadata": {"headers": {"Retry-After": "90"}}}}
+
+        self.assertEqual(_retry_after(FromHeader()), 120.0)
+        self.assertEqual(_retry_after(FromBody()), 90.0,
+                         "the same refusal arrives both ways depending on the layer")
+        self.assertEqual(_retry_after(Exception("nothing")), 0.0)
+
+        class Forever:
+            headers = {"Retry-After": "9999"}
+
+        class Outage(Exception):
+            response = Forever()
+
+        self.assertEqual(_retry_after(Outage()), MAX_RETRY_AFTER_SECONDS,
+                         "past a point it is an outage, not a pause")
+
+    def test_the_builder_is_told_how_to_make_a_curve(self):
+        """Minecraft has no curves, so a round thing is a stack of circles whose radii
+        have to be computed. Guessing them gives a barrel with a lid."""
+        from builder import SYSTEM
+
+        self.assertIn("sqrt(R^2 - (y - Yc)^2)", SYSTEM)
+        self.assertIn("Never approximate a curve with a single `fill`", SYSTEM)
+        self.assertIn("15-25 blocks", SYSTEM, "large has to mean a number")
+
     def test_building_a_shape_is_asked_of_a_builder(self):
         """A dialogue model asked for a humanoid statue produced something nobody would
         recognise. Shape is a different skill from conversation."""

@@ -2794,12 +2794,26 @@ thinking=thinking_for(VISION_MODEL),
         result = await design(what, anchor, str(request.get("facing") or ""),
                               str(request.get("materials") or ""),
                               site=site, standing=standing or None)
-        if result.get("commands"):
-            self.log(f"{GREEN}the builder returned {result['count']} command(s){RESET}"
-                     f" {DIM}{result.get('describes')}{RESET}")
-        else:
+        if not result.get("commands"):
             self.log(f"{YELLOW}the builder gave nothing: {result.get('error')}{RESET}")
-        return result
+            return result
+        self.log(f"{GREEN}the builder returned {result['count']} command(s){RESET}"
+                 f" {DIM}{result.get('describes')}{RESET}")
+
+        # The build is placed here, not handed back. Returning the command list made the
+        # dialogue model retype it into act_on_world, and a build does not fit in a reply:
+        # of 275 commands for a hot air balloon, 4 arrived and the world got the gondola
+        # floor and nothing above it. Passing work through a language model that has
+        # already decided what the work is costs an answer's worth of tokens to lose most
+        # of it. The commands are absolute, so they need no anchor.
+        placed = await self.run_commands({"commands": result["commands"]}, actor=None)
+        done, failed = len(placed["done"]), placed["failures"]
+        self.log(f"{GREEN}placed {done} of {result['count']}{RESET}"
+                 + (f" {YELLOW}{len(failed)} refused or failed{RESET}" if failed else ""))
+        return {"built": result.get("describes"), "placed": done,
+                "of": result["count"], "failed": failed[:5],
+                "note": "The build is already in the world. Do not run these commands "
+                        "again; look at it if you want to check it."}
 
     async def grant_powers(self, request: dict, actor: str | None = None) -> dict:
         """Give or take an ability the model has just invented.

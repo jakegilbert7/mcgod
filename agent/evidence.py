@@ -69,8 +69,10 @@ DESIGN_TOOL = {
         "Ask the builder for the commands that make something. Use it whenever the player "
         "asks you to BUILD or SCULPT anything whose shape matters — a statue, a house, an "
         "arch, a tower, a bridge with any character to it.\n"
-        "Describe what is wanted and where in plain words and give the anchor point; you "
-        "get back the commands, which you then run with act_on_world and look at. The "
+        "Describe what is wanted and where in plain words and give the anchor point. The "
+        "build is PLACED FOR YOU and you get back what it was and how much of it landed; "
+        "do not run anything yourself for it, just look at the result if you want to "
+        "check it. The "
         "builder holds the shape in mind block by block, which is a different skill from "
         "conversation and one you should not attempt yourself for anything figurative.\n"
         "It is surveyed the ground around the anchor for you, so you do not need to "
@@ -324,6 +326,30 @@ async def complete_message(client, timeout: float | None = None, **request):
     return reply
 
 
+#: The longest we will sit on a provider's own Retry-After. Past this it is not a pause,
+#: it is an outage, and saying so beats a player watching nothing happen for ten minutes.
+MAX_RETRY_AFTER_SECONDS = 150.0
+
+
+def _retry_after(error) -> float:
+    """How long the provider asked us to wait, if it asked at all.
+
+    Read from the response header first and from the error body second, because the same
+    refusal arrives both ways depending on which layer raised it.
+    """
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    value = headers.get("Retry-After") or headers.get("retry-after")
+    if value is None:
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            inner = (body.get("error") or {}).get("metadata") or {}
+            value = (inner.get("headers") or {}).get("Retry-After")
+    try:
+        return min(float(value), MAX_RETRY_AFTER_SECONDS) if value else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 async def _within_deadline(client, request: dict, attempts: int = 2,
                            timeout: float | None = None):
     """One model call, abandoned and retried if it stalls.
@@ -348,8 +374,16 @@ async def _within_deadline(client, request: dict, attempts: int = 2,
             last = error
             if attempt + 1 >= attempts:
                 raise
+            # A provider that says "wait" means it. Retrying a rate or budget refusal
+            # immediately spends the second attempt on the same answer: one build died to
+            # a 402 carrying Retry-After 120 that we asked again 0.4 seconds later.
+            wait = _retry_after(error)
             print(f"model call failed after {time.monotonic() - started:.1f}s "
-                  f"({type(error).__name__}); asking again", flush=True)
+                  f"({type(error).__name__}); "
+                  f"{f'waiting {wait:.0f}s then asking again' if wait else 'asking again'}",
+                  flush=True)
+            if wait:
+                await asyncio.sleep(wait)
     raise TimeoutError(
         f"model did not answer within {timeout or MODEL_TIMEOUT_SECONDS:.0f}s across "
         f"{attempts} attempts") from last

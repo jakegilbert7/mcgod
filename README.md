@@ -128,7 +128,9 @@ language model:
   contour grid of surface heights and a second grid of surface materials rather than a
   picture: a render cannot say that this column is three blocks lower than that one, and a
   builder that cannot read the slope sets a statue's feet in the air on one side and buries
-  them on the other.
+  them on the other. What comes back is placed directly and never returned to the dialogue
+  model, which would have to retype several hundred commands into a reply that cannot hold
+  them.
 
 All three live inside the same loop as the observation tools, so the god can act, look at
 what happened, and put it right before it says anything. `/mcgod stop` cancels everything.
@@ -172,7 +174,7 @@ Java rather than as data.
 | `render.py` `assets.py` `entity_models.py` `render_structures.py` | the renderer and its inputs |
 | `scan.py` `bridge.py` `consumer.py` `replay.py` | the wire: RPC, live stream, replay harness |
 | `model_api.py` `config.py` | provider boundary for Anthropic and OpenRouter |
-| `test_regression.py` | 310 offline tests |
+| `test_regression.py` | 313 offline tests |
 | `cubiomes/` | vendored cubiomes, patched to 26.2 — see its `PROVENANCE.md` |
 
 Also `classify.py`, `eval_segment.py`, `compare_models.py`, `survey.py`, `summary.py`,
@@ -204,7 +206,7 @@ vision, build and segmentation roles are separate variables so each can be swapp
 measured on its own.
 
 ```bash
-.venv/bin/python test_regression.py    # 268 offline tests; no server, no API key
+.venv/bin/python test_regression.py    # 271 offline tests; no server, no API key
 .venv/bin/python seedmap.py --count village --at 300 -300 --radius 10000
 .venv/bin/python masses.py --audit
 .venv/bin/python render_structures.py --check
@@ -212,9 +214,9 @@ measured on its own.
 
 ### The corpus
 
-Forty-two of the 310 tests replay recorded sessions, and those recordings are not in this
+Forty-two of the 313 tests replay recorded sessions, and those recordings are not in this
 repository: a session file is a play-by-play of somebody's game with their player UUID on
-every line. Without one those tests skip and the other 268 run. Play with the plugin
+every line. Without one those tests skip and the other 271 run. Play with the plugin
 installed, then copy a file from `server/plugins/McGod/events/` into
 `agent/sessions/corpus/`, and the whole suite runs against your own world.
 
