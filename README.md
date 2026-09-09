@@ -21,6 +21,9 @@ you: give me the power of launching pigs
 god: [writes one: right-click throws a pig where you look]
 you: make them explode on impact
 god: [rewrites the same power: on_hit summons primed tnt where the pig lands]
+you: now make me bouncy
+god: [on_land, impulse bounce, and no fall damage so the second landing
+      does not kill you]
 ```
 
 ## How it works
@@ -110,17 +113,22 @@ language model:
   server settings or prints to chat is on it. Work is drained a bounded number per tick, so
   the request is unbounded but the pace is not.
 - **`grant_power`** invents an ability rather than picking one from a list. The model writes
-  what gesture triggers it and what commands it runs — right-click, sneak, move, attack, be
-  hurt, a tick interval, or the moment something they threw lands — and those commands run
-  anchored to the player, so `^ ^ ^4` is four blocks along their line of sight. A handful of
-  switches cover what no command can say: flight without creative mode, no fall damage,
-  immunity to a damage cause, walk speed, and an entity or block thrown where they are
-  looking, which a summon cannot aim. Granting a name that is already held replaces it, which
-  is how a power gets edited rather than duplicated. Held per player with an expiry, restoring
-  what was there before. The scripted commands pass the same allowlist a direct command does,
+  what gesture triggers it and what commands it runs — right-click, sneak, move, land, attack,
+  be hurt, a tick interval, or the moment something they threw arrives — and those commands run
+  anchored to the player, so `^ ^ ^4` is four blocks along their line of sight. Beside them sit
+  the primitives no command can express: flight without creative mode, immunity to a damage
+  cause, walk speed, an entity or block thrown where they are looking, a traced hitscan beam
+  that stops at the first thing it meets and never at its own shooter, and an impulse, since
+  teleporting somebody somewhere cannot give them momentum and being bouncy is entirely
+  momentum. Granting a name that is already held replaces it, which is how a power gets edited
+  rather than duplicated. The scripted commands pass the same allowlist a direct command does,
   so binding one to a right-click is not a way around it.
 - **`design_build`** asks a separate build model for the commands that make a shape, because
-  holding a figure in mind is a different skill from conversation.
+  holding a figure in mind is a different skill from conversation. It is given the site as a
+  contour grid of surface heights and a second grid of surface materials rather than a
+  picture: a render cannot say that this column is three blocks lower than that one, and a
+  builder that cannot read the slope sets a statue's feet in the air on one side and buries
+  them on the other.
 
 All three live inside the same loop as the observation tools, so the god can act, look at
 what happened, and put it right before it says anything. `/mcgod stop` cancels everything.
@@ -164,7 +172,7 @@ Java rather than as data.
 | `render.py` `assets.py` `entity_models.py` `render_structures.py` | the renderer and its inputs |
 | `scan.py` `bridge.py` `consumer.py` `replay.py` | the wire: RPC, live stream, replay harness |
 | `model_api.py` `config.py` | provider boundary for Anthropic and OpenRouter |
-| `test_regression.py` | 302 offline tests |
+| `test_regression.py` | 307 offline tests |
 | `cubiomes/` | vendored cubiomes, patched to 26.2 — see its `PROVENANCE.md` |
 
 Also `classify.py`, `eval_segment.py`, `compare_models.py`, `survey.py`, `summary.py`,
@@ -196,7 +204,7 @@ vision, build and segmentation roles are separate variables so each can be swapp
 measured on its own.
 
 ```bash
-.venv/bin/python test_regression.py    # 260 offline tests; no server, no API key
+.venv/bin/python test_regression.py    # 265 offline tests; no server, no API key
 .venv/bin/python seedmap.py --count village --at 300 -300 --radius 10000
 .venv/bin/python masses.py --audit
 .venv/bin/python render_structures.py --check
@@ -204,9 +212,9 @@ measured on its own.
 
 ### The corpus
 
-Forty-two of the 302 tests replay recorded sessions, and those recordings are not in this
+Forty-two of the 307 tests replay recorded sessions, and those recordings are not in this
 repository: a session file is a play-by-play of somebody's game with their player UUID on
-every line. Without one those tests skip and the other 260 run. Play with the plugin
+every line. Without one those tests skip and the other 265 run. Play with the plugin
 installed, then copy a file from `server/plugins/McGod/events/` into
 `agent/sessions/corpus/`, and the whole suite runs against your own world.
 

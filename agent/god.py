@@ -160,10 +160,11 @@ IDLE_LOOK_TICKS = 12_000              # 10 min
 #:
 #: The loop can act, observe and correct, which is what makes it useful and also what makes
 #: it able to spend forever on a stubborn request. Generous rather than tight, because a
-#: build is a real piece of work: the builder takes about twenty seconds to design a statue,
-#: the commands take a moment to land, and looking at the result costs another round. A
-#: question that needs none of that never comes near this.
-ACT_BUDGET_SECONDS = float(os.environ.get("MCGOD_ACT_BUDGET", "150"))
+#: build is a real piece of work: the builder may spend minutes writing several hundred
+#: commands, they take a moment to land, and looking at the result costs another round. A
+#: question that needs none of that never comes near this. Set below the builder's own
+#: deadline this was cutting every build off mid-design, which surfaced as a timeout.
+ACT_BUDGET_SECONDS = float(os.environ.get("MCGOD_ACT_BUDGET", "480"))
 
 #: A movement sample this old no longer says where someone is.
 PRESENCE_TICKS = 600                  # 30s
@@ -2461,7 +2462,7 @@ thinking=thinking_for(VISION_MODEL),
                 results = []
                 for block in tool_uses:
                     if block.name == "design_build":
-                        result = await self.design_build(block.input or {})
+                        result = await self.design_build(block.input or {}, actor)
                     elif block.name == "grant_power":
                         result = await self.grant_powers(block.input or {}, actor)
                     elif block.name == "act_on_world":
@@ -2693,19 +2694,70 @@ thinking=thinking_for(VISION_MODEL),
                               "wider rather than reporting it done")
         return report
 
-    async def design_build(self, request: dict) -> dict:
+    async def design_build(self, request: dict, actor: str | None = None) -> dict:
         """Ask the builder for a shape. It returns commands; running them stays the loop's
-        job, so the god still looks at what it made."""
-        from builder import design
+        job, so the god still looks at what it made.
+
+        The builder is given the ground first. It used to be told only what to build and a
+        single anchor point, which is not enough to put a thing down: on a slope it sets one
+        foot in the air and buries the other, and it cannot know whether it is about to
+        write a statue through somebody's roof.
+        """
+        from builder import SITE_RADIUS, design, survey
 
         what = str(request.get("what") or "").strip()
         if not what:
             return {"error": "say what to build"}
         anchor = [int(request.get("x", 0)), int(request.get("y", 64)),
                   int(request.get("z", 0))]
-        self.log(f"{DIM}asking the builder for {what!r} at {anchor}{RESET}")
+        dim = str(request.get("dim") or "overworld")
+
+        site, standing = None, []
+        try:
+            lo = [anchor[0] - SITE_RADIUS, max(-64, anchor[1] - 24),
+                  anchor[2] - SITE_RADIUS]
+            hi = [anchor[0] + SITE_RADIUS, anchor[1] + 24, anchor[2] + SITE_RADIUS]
+            read = await request_voxels(URL, dim, lo, hi)
+            if read.get("ok"):
+                site = survey(to_voxels(read), anchor)
+        except Exception as error:  # noqa: BLE001 - a blind build beats no build
+            self.log(f"{YELLOW}could not survey the site "
+                     f"({type(error).__name__}); building blind{RESET}")
+        try:
+            from grounding import box_of, current, current_generated
+            for row in list(current(self.store, dim)) + list(
+                    current_generated(self.store, dim)):
+                lo_b, hi_b = box_of(row)
+                if not lo_b or not hi_b:
+                    continue
+                # Anything whose box overlaps the surveyed square, however it is placed.
+                # Comparing centres missed a village wall running through the site.
+                if (lo_b[0] <= anchor[0] + SITE_RADIUS
+                        and hi_b[0] >= anchor[0] - SITE_RADIUS
+                        and lo_b[2] <= anchor[2] + SITE_RADIUS
+                        and hi_b[2] >= anchor[2] - SITE_RADIUS):
+                    standing.append({
+                        "name": self.store.structure_name(row["id"]) or "unnamed",
+                        "from": list(lo_b), "to": list(hi_b)})
+        except Exception as error:  # noqa: BLE001
+            self.log(f"{YELLOW}could not list what stands here "
+                     f"({type(error).__name__}){RESET}")
+
+        # A build is minutes, not seconds. Silence for that long is indistinguishable from
+        # the god having ignored them, and they were told as much.
+        if actor and self.names.get(actor):
+            try:
+                await speak("Hold on. I am making it.", URL,
+                            target=self.names.get(actor), reply=True)
+            except Exception:  # noqa: BLE001
+                pass
+        self.log(f"{DIM}asking the builder for {what!r} at {anchor}"
+                 f"{' with a survey' if site else ' blind'}"
+                 f"{f', {len(standing)} thing(s) already here' if standing else ''}"
+                 f"{RESET}")
         result = await design(what, anchor, str(request.get("facing") or ""),
-                              str(request.get("materials") or ""))
+                              str(request.get("materials") or ""),
+                              site=site, standing=standing or None)
         if result.get("commands"):
             self.log(f"{GREEN}the builder returned {result['count']} command(s){RESET}"
                      f" {DIM}{result.get('describes')}{RESET}")
@@ -2739,8 +2791,14 @@ thinking=thinking_for(VISION_MODEL),
                 player, name, URL,
                 scripts=scripts,
                 switches=request.get("switches") or [],
+                on=request.get("on") or [],
                 projectile=request.get("projectile") or None,
                 speed=float(request.get("speed") or 0),
+                impulse=request.get("impulse") or None,
+                power=float(request.get("power") or 0),
+                beam=request.get("beam") or None,
+                range=int(request.get("range") or 0),
+                damage=float(request.get("damage") or 0),
                 every=int(request.get("every") or 0),
                 duration=int(request.get("duration") or 0),
                 cooldown_ms=int(request.get("cooldown_ms") or 200),

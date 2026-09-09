@@ -72,7 +72,11 @@ DESIGN_TOOL = {
         "Describe what is wanted and where in plain words and give the anchor point; you "
         "get back the commands, which you then run with act_on_world and look at. The "
         "builder holds the shape in mind block by block, which is a different skill from "
-        "conversation and one you should not attempt yourself for anything figurative."
+        "conversation and one you should not attempt yourself for anything figurative.\n"
+        "It is surveyed the ground around the anchor for you, so you do not need to "
+        "describe the terrain, and it takes a while: a real build is minutes of work, not "
+        "seconds. Ask once and wait for it rather than giving up and writing the commands "
+        "yourself."
     ),
     "input_schema": {
         "type": "object",
@@ -87,6 +91,9 @@ DESIGN_TOOL = {
                        "description": "which way it should face: north, south, east, west"},
             "materials": {"type": "string",
                           "description": "any materials the player named"},
+            "dim": {"type": "string",
+                    "description": "the dimension to build in; overworld unless told "
+                                   "otherwise"},
         },
         "required": ["what", "x", "y", "z"],
         "additionalProperties": False,
@@ -98,45 +105,58 @@ POWER_TOOL = {
     "description": (
         "Invent an ability and give it to a player. There is no list of powers to pick "
         "from: you write what the power DOES, and the server binds it to a gesture.\n"
-        "An ability is three things, and you may use any combination:\n"
-        "  scripts  - commands to run when the player does something. The triggers are "
-        "on_use (either mouse button), on_sneak, on_move, on_attack (they hit something "
-        "themselves), on_damaged, on_hit (something they THREW landed or struck), and "
-        "every (with `every` set to a tick interval). Commands run anchored to the "
-        "player, so `~ ~ ~` is where they stand and `^ ^ ^5` is five blocks ahead of "
-        "where they are LOOKING. That is how you aim anything. The exception is on_hit, "
-        "whose commands run where the thrown thing came down, which is the only way to "
-        "make something happen somewhere the player is not.\n"
-        "  switches - the things a command cannot say: fly (flight without creative "
-        "mode, so they keep inventory, hunger and damage), no_fall, glow, "
-        "immune:<cause> (fire, lava, explosion, drowning, or all), walk_speed:<n> "
-        "(0.2 is normal, 0.6 is very fast).\n"
-        "  projectile - a thing thrown along the line of sight on use, aimed where they "
-        "look, which a summon command cannot do. Any entity id (small_fireball, arrow, "
-        "snowball, trident, wind_charge, tnt, even a cow) or any BLOCK, thrown falling, "
-        "so anvil and bell and pointed_dripstone all work. `speed` sets how hard it is "
-        "thrown, default 1.6.\n"
+        "TRIGGERS, which say when it happens: on_use (either mouse button), on_sneak, "
+        "on_move, on_land (they hit the ground after a fall), on_attack (they hit "
+        "something), on_damaged, on_hit (something they threw or shot arrived), every "
+        "(with `every` set to a tick interval).\n"
+        "An ability is made of any combination of these:\n"
+        "  scripts  - commands keyed by trigger. They run anchored to the player, so "
+        "`~ ~ ~` is where they stand and `^ ^ ^5` is five blocks ahead of where they are "
+        "LOOKING. The exception is on_hit, whose commands run where the thrown or shot "
+        "thing arrived, which is the only way to act somewhere the player is not.\n"
+        "  switches - what no command can say: fly (flight without creative mode, so "
+        "they keep inventory, hunger and damage), no_fall, glow, immune:<cause> (fire, "
+        "lava, explosion, drowning, or all), walk_speed:<n> (0.2 normal, 0.6 very fast)."
+        "\n"
+        "  projectile - a thing thrown along the line of sight, aimed where they look, "
+        "which a summon cannot do. Any entity id (small_fireball, arrow, snowball, tnt, "
+        "even a cow) or any BLOCK, thrown falling, so anvil works. `speed` sets how hard."
+        "\n"
+        "  beam - a HITSCAN ray: instant, straight, stopping at the first block or "
+        "creature, up to `range` blocks (default 64, max 256). The value is the particle "
+        "drawn along it: flame, electric_spark, end_rod, soul_fire_flame, crit, dust. "
+        "`damage` is hearts dealt to whatever it strikes. Use this for lasers and beams "
+        "rather than writing a run of particle commands: those stop where the list "
+        "stops rather than where the beam hits, pass through walls, and land their "
+        "damage on whoever is nearest, including the player holding it. A beam never "
+        "hits its own shooter. Pair with on_hit for what happens at the far end.\n"
+        "  impulse - MOVEMENT, which no command can give. `tp` puts somebody somewhere; "
+        "it cannot give them momentum. Modes: look (flung where they face), up, back, "
+        "bounce (the speed they landed at, sent back the way it came), stop (all motion "
+        "killed). `power` scales it, 1.0 by default.\n"
+        "  on - which triggers work the projectile, beam and impulse. Defaults to "
+        "on_use. This is separate from the script keys because the good ones have no "
+        "script: a bouncy player is on: [on_land] with impulse bounce and nothing else.\n"
         "Examples of the shape, not a menu:\n"
         "  a web shooter -> scripts {on_use: [\"setblock ^ ^ ^4 cobweb\"]}\n"
         "  frozen wake -> scripts {on_move: [\"setblock ~ ~-1 ~ packed_ice\"]}\n"
-        "  thunder caller -> scripts {on_sneak: [\"summon lightning_bolt ^ ^ ^12\"]}\n"
-        "  a leap -> scripts {on_sneak: [\"effect give @s jump_boost 1 40 true\", "
-        "\"execute at @s run tp @s ~ ~1 ~\"]}, switches [no_fall]\n"
+        "  bouncy -> on [on_land], impulse bounce, power 1.1, switches [no_fall]. The "
+        "no_fall matters: bouncing without it kills them on the second landing.\n"
+        "  a laser -> beam electric_spark, range 120, damage 6\n"
+        "  a rocket jump -> on [on_sneak], impulse up, power 1.6, switches [no_fall]\n"
+        "  exploding pigs -> projectile pig, scripts {on_hit: [\"summon tnt ~ ~ ~ "
+        "{fuse:1s}\"]}\n"
         "  meteor storm -> every 10, scripts {every: [\"summon fireball ~ ~30 ~ "
         "{power:[0.0,-1.0,0.0]}\"]}\n"
-        "  exploding pigs -> projectile pig, scripts {on_hit: [\"summon tnt ~ ~ ~ "
-        "{fuse:1s}\"]}. on_hit is the ONLY way to act where a thrown thing landed; "
-        "on_attack is the player swinging at something, which is a different event.\n"
         "Prefer this over creative mode and a stack of items. Creative is not a "
         "superpower, it is a different game, and a fire charge you have to throw by hand "
         "is not what anyone means by throwing fire.\n"
         "CHANGING AND REMOVING. `name` identifies the power. Granting a name that is "
-        "already held REPLACES it, and that is how you edit one: to make an existing "
-        "power automatic or stronger or different, grant it again under its EXISTING "
-        "name carrying the whole definition you want. Never invent a second name beside "
-        "it, or the old one keeps firing. You are told which powers the player is "
-        "holding; use those names exactly. To remove one, set revoke with its name; to "
-        "remove everything, set revoke with no name at all.\n"
+        "already held REPLACES it, and that is how you edit one: grant it again under "
+        "its EXISTING name carrying the whole definition you want. Never invent a second "
+        "name beside it, or the old one keeps firing. You are told which powers the "
+        "player is holding; use those names exactly. To remove one, set revoke with its "
+        "name; to remove everything, set revoke with no name at all.\n"
         "`duration` is in ticks (20 a second); leave it out to hold until taken away. "
         "`cooldown_ms` throttles a trigger that would otherwise fire many times a "
         "second; on_move and on_use fire constantly, so set it unless you want a dense "
@@ -153,8 +173,15 @@ POWER_TOOL = {
                 "additionalProperties": {"type": "array", "items": {"type": "string"}},
             },
             "switches": {"type": "array", "items": {"type": "string"}},
+            "on": {"type": "array", "items": {"type": "string"}},
             "projectile": {"type": "string"},
             "speed": {"type": "number"},
+            "beam": {"type": "string"},
+            "range": {"type": "integer", "minimum": 1, "maximum": 256},
+            "damage": {"type": "number", "minimum": 0},
+            "impulse": {"type": "string",
+                        "enum": ["look", "up", "back", "bounce", "stop"]},
+            "power": {"type": "number"},
             "every": {"type": "integer", "minimum": 1},
             "duration": {"type": "integer", "minimum": 1},
             "cooldown_ms": {"type": "integer", "minimum": 0},
@@ -266,28 +293,39 @@ def tool_result_block(block, result: dict) -> dict:
     return tool_result
 
 
-async def complete_message(client, **request):
+async def complete_message(client, timeout: float | None = None, **request):
     """Return a complete model turn, retrying rather than accepting cut-off prose.
 
     Adaptive thinking and visible text share ``max_tokens``. A difficult visual/tool turn can
     therefore exhaust a seemingly ample answer budget during reasoning and leave half a word
     as its final text. Partial output is not evidence and must never reach chat or memory.
+
+    A caller's own ``max_tokens`` is honoured. It used to be overwritten with the dialogue
+    default, which quietly broke the one caller that needs a much larger answer: a statue is
+    several hundred setblock commands, so the builder asked for sixteen thousand tokens, got
+    four, hit the ceiling on both attempts and raised. Every build failed, and the failure
+    read as a timeout.
+
+    ``timeout`` likewise, because how long is too long is a property of the job. Twenty-five
+    seconds is right for a reply somebody is waiting on in chat and wrong for a build.
     """
     request = dict(request)
-    request["max_tokens"] = MODEL_OUTPUT_TOKENS
-    reply = await _within_deadline(client, request)
+    ceiling = int(request.pop("max_tokens", 0) or MODEL_OUTPUT_TOKENS)
+    larger = max(ceiling * 2, MODEL_RETRY_TOKENS)
+    request["max_tokens"] = ceiling
+    reply = await _within_deadline(client, request, timeout=timeout)
     if getattr(reply, "stop_reason", None) != "max_tokens":
         return reply
-    print(f"model output reached {MODEL_OUTPUT_TOKENS} tokens; retrying with "
-          f"{MODEL_RETRY_TOKENS}", flush=True)
-    request["max_tokens"] = MODEL_RETRY_TOKENS
-    reply = await _within_deadline(client, request)
+    print(f"model output reached {ceiling} tokens; retrying with {larger}", flush=True)
+    request["max_tokens"] = larger
+    reply = await _within_deadline(client, request, timeout=timeout)
     if getattr(reply, "stop_reason", None) == "max_tokens":
         raise RuntimeError("model output remained incomplete after a larger retry")
     return reply
 
 
-async def _within_deadline(client, request: dict, attempts: int = 2):
+async def _within_deadline(client, request: dict, attempts: int = 2,
+                           timeout: float | None = None):
     """One model call, abandoned and retried if it stalls.
 
     The retry is a fresh request rather than a wait: a provider that has not answered in
@@ -299,10 +337,10 @@ async def _within_deadline(client, request: dict, attempts: int = 2):
         started = time.monotonic()
         try:
             return await asyncio.wait_for(client.messages.create(**request),
-                                          timeout=MODEL_TIMEOUT_SECONDS)
+                                          timeout=timeout or MODEL_TIMEOUT_SECONDS)
         except asyncio.TimeoutError as error:
             last = error
-            print(f"model call exceeded {MODEL_TIMEOUT_SECONDS:.0f}s "
+            print(f"model call exceeded {timeout or MODEL_TIMEOUT_SECONDS:.0f}s "
                   f"(attempt {attempt + 1} of {attempts}); "
                   f"{'asking again' if attempt + 1 < attempts else 'giving up'}",
                   flush=True)
@@ -313,7 +351,7 @@ async def _within_deadline(client, request: dict, attempts: int = 2):
             print(f"model call failed after {time.monotonic() - started:.1f}s "
                   f"({type(error).__name__}); asking again", flush=True)
     raise TimeoutError(
-        f"model did not answer within {MODEL_TIMEOUT_SECONDS:.0f}s across "
+        f"model did not answer within {timeout or MODEL_TIMEOUT_SECONDS:.0f}s across "
         f"{attempts} attempts") from last
 
 

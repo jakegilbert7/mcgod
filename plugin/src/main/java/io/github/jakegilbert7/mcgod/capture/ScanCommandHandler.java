@@ -396,16 +396,23 @@ public final class ScanCommandHandler {
                 }
             }
         }
-        String projectile = request.has("projectile") && !request.get("projectile").isJsonNull()
-                ? request.get("projectile").getAsString() : null;
-        double speed = request.has("speed") ? request.get("speed").getAsDouble() : 0;
-        int every = request.has("every") ? request.get("every").getAsInt() : 0;
-        long duration = request.has("duration") ? request.get("duration").getAsLong() : 0;
-        long cooldown = request.has("cooldown_ms") ? request.get("cooldown_ms").getAsLong() : 200;
+        List<String> on = new ArrayList<>();
+        if (request.has("on") && request.get("on").isJsonArray()) {
+            for (var value : request.getAsJsonArray("on")) {
+                on.add(value.getAsString());
+            }
+        }
+        PowerService.Spec spec = new PowerService.Spec(
+                name, switches, scripts, on,
+                text(request, "projectile"), number(request, "speed"),
+                text(request, "impulse"), number(request, "power"),
+                text(request, "beam"), (int) number(request, "range"),
+                number(request, "damage"),
+                (int) number(request, "every"), (long) number(request, "duration"),
+                request.has("cooldown_ms") ? request.get("cooldown_ms").getAsLong() : 200);
 
         Bukkit.getScheduler().runTask(plugin, () -> {
-            PowerService.Granted granted = powers.grant(player, name, switches, scripts,
-                    projectile, speed, every, duration, cooldown);
+            PowerService.Granted granted = powers.grant(player, spec);
             StringBuilder out = new StringBuilder("{\"rpc\":\"power_result\",\"id\":");
             Json.string(out, id);
             if (granted.error() != null) {
@@ -465,6 +472,16 @@ public final class ScanCommandHandler {
                 conn.send(out.toString());
             }
         });
+    }
+
+    private static String text(JsonObject request, String key) {
+        return request.has(key) && !request.get(key).isJsonNull()
+                ? request.get(key).getAsString() : null;
+    }
+
+    private static double number(JsonObject request, String key) {
+        return request.has(key) && !request.get(key).isJsonNull()
+                ? request.get(key).getAsDouble() : 0;
     }
 
     /** A JSON array of strings, which the power reply needs six times over. */

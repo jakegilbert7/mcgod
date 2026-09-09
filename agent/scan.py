@@ -144,14 +144,18 @@ def to_voxels(result: dict) -> dict:
 
 #: The triggers and switches an ability may be built from. The plugin is authoritative;
 #: this is the vocabulary the model is shown, so an invented word comes back named.
-TRIGGERS = ("on_use", "on_sneak", "on_move", "on_attack", "on_damaged", "on_hit",
-            "every")
+TRIGGERS = ("on_use", "on_sneak", "on_move", "on_land", "on_attack", "on_damaged",
+            "on_hit", "every")
+IMPULSES = ("look", "up", "back", "bounce", "stop")
 SWITCHES = ("fly", "no_fall", "glow", "immune:", "walk_speed:")
 
 
 async def grant_power(player: str, name: str, url: str = DEFAULT_URL, *,
-                      scripts: dict | None = None, switches=(), projectile: str | None = None,
-                      speed: float = 0, every: int = 0, duration: int = 0,
+                      scripts: dict | None = None, switches=(), on=(),
+                      projectile: str | None = None, speed: float = 0,
+                      impulse: str | None = None, power: float = 0,
+                      beam: str | None = None, range: int = 0, damage: float = 0,
+                      every: int = 0, duration: int = 0,
                       cooldown_ms: int = 200, revoke: bool = False,
                       timeout: float = 20.0) -> dict:
     """Give or take an ability the god has invented.
@@ -169,7 +173,10 @@ async def grant_power(player: str, name: str, url: str = DEFAULT_URL, *,
         "rpc": "grant_power", "player": player, "name": name,
         "scripts": {str(k): [str(c) for c in v] for k, v in (scripts or {}).items()},
         "switches": [str(s) for s in switches],
+        "on": [str(t) for t in on],
         "projectile": projectile, "speed": float(speed),
+        "impulse": impulse, "power": float(power),
+        "beam": beam, "range": int(range), "damage": float(damage),
         "every": int(every), "duration": int(duration), "cooldown_ms": int(cooldown_ms),
     }, "power_result", timeout)
 

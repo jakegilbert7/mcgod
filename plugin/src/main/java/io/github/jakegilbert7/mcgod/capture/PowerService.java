@@ -12,10 +12,13 @@ import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Particle;
+import org.bukkit.FluidCollisionMode;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.FallingBlock;
 import org.bukkit.entity.Fireball;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
@@ -32,6 +35,7 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 
 /**
@@ -69,7 +73,20 @@ public final class PowerService implements Listener {
         String name = "power";
         final List<String> switches = new ArrayList<>();
         final Map<String, List<String>> scripts = new HashMap<>();
+        /**
+         * Which triggers work the native effects: the projectile, the beam, the impulse.
+         *
+         * <p>Separate from the script keys because the interesting ones have no script. A
+         * bouncy player is an impulse on landing and nothing else, so there is no command
+         * list to read the trigger off.
+         */
+        final List<String> triggers = new ArrayList<>();
         String projectile;
+        String impulse;
+        double power = 1.0;
+        String beam;
+        int range = 64;
+        double damage;
         double speed = 1.6;
         int every;
         long expiresAtTick = Long.MAX_VALUE;
@@ -87,11 +104,26 @@ public final class PowerService implements Listener {
         final List<Ability> abilities = new ArrayList<>();
         boolean couldFlyBefore;
         float walkSpeedBefore = 0.2f;
+        /**
+         * The velocity they were carrying while still in the air.
+         *
+         * <p>What a bounce needs and cannot get any other way: by the time the game reports
+         * a landing the fall has already been absorbed and the velocity read as zero, so
+         * reversing it there does nothing at all. The last airborne reading is the speed
+         * they actually arrived at.
+         */
+        Vector falling = new Vector();
+        boolean wasAirborne;
     }
 
     /** The triggers a script may hang from. Anything else is refused by name. */
     public static final List<String> TRIGGERS = List.of(
-            "on_use", "on_sneak", "on_move", "on_attack", "on_damaged", "on_hit", "every");
+            "on_use", "on_sneak", "on_move", "on_land", "on_attack", "on_damaged",
+            "on_hit", "every");
+
+    /** The ways a power may move the player it belongs to. */
+    public static final List<String> IMPULSES = List.of(
+            "look", "up", "back", "bounce", "stop");
 
     /** The switches, which are the things no command expresses. */
     public static final List<String> SWITCHES = List.of(
@@ -130,12 +162,27 @@ public final class PowerService implements Listener {
      * <p>Unknown switches and triggers are reported rather than ignored, so a model that
      * invents vocabulary is told what exists instead of quietly getting nothing.
      */
-    public synchronized Granted grant(String playerName, String name,
-                                      List<String> switches,
-                                      Map<String, List<String>> scripts,
-                                      String projectile, double speed,
-                                      int every, long durationTicks,
-                                      long cooldownMs) {
+    public record Spec(String name, List<String> switches,
+                       Map<String, List<String>> scripts, List<String> on,
+                       String projectile, double speed, String impulse, double power,
+                       String beam, int range, double damage,
+                       int every, long durationTicks, long cooldownMs) { }
+
+    public synchronized Granted grant(String playerName, Spec spec) {
+        String name = spec.name();
+        List<String> switches = spec.switches();
+        Map<String, List<String>> scripts = spec.scripts();
+        List<String> on = spec.on();
+        String projectile = spec.projectile();
+        double speed = spec.speed();
+        String impulse = spec.impulse();
+        double power = spec.power();
+        String beam = spec.beam();
+        int range = spec.range();
+        double damage = spec.damage();
+        int every = spec.every();
+        long durationTicks = spec.durationTicks();
+        long cooldownMs = spec.cooldownMs();
         Player player = Bukkit.getPlayerExact(playerName);
         if (player == null) {
             return new Granted("no player called " + playerName + " is here",
@@ -145,6 +192,24 @@ public final class PowerService implements Listener {
         Ability ability = new Ability();
         ability.name = name == null || name.isBlank() ? "power" : name;
         ability.projectile = projectile == null || projectile.isBlank() ? null : projectile;
+        ability.impulse = impulse == null || impulse.isBlank() ? null
+                : impulse.toLowerCase(Locale.ROOT).trim();
+        ability.power = power > 0 ? power : 1.0;
+        ability.beam = beam == null || beam.isBlank() ? null : beam;
+        ability.range = Math.max(1, Math.min(256, range > 0 ? range : 64));
+        ability.damage = Math.max(0, damage);
+        if (ability.impulse != null && !IMPULSES.contains(ability.impulse)) {
+            unknown.add("impulse:" + ability.impulse);
+            ability.impulse = null;
+        }
+        for (String raw : on == null || on.isEmpty() ? List.of("on_use") : on) {
+            String trigger = raw.toLowerCase(Locale.ROOT).trim();
+            if (TRIGGERS.contains(trigger)) {
+                ability.triggers.add(trigger);
+            } else {
+                unknown.add(trigger);
+            }
+        }
         ability.speed = speed > 0 ? speed : 1.6;
         ability.every = Math.max(0, every);
         ability.cooldownMs = Math.max(0, cooldownMs);
@@ -290,6 +355,7 @@ public final class PowerService implements Listener {
     private void tick() {
         long now = Bukkit.getCurrentTick();
         List<Runnable> due = new ArrayList<>();
+        List<Player> landing = new ArrayList<>();
         synchronized (this) {
             for (UUID id : List.copyOf(held.keySet())) {
                 Held holder = held.get(id);
@@ -310,6 +376,19 @@ public final class PowerService implements Listener {
                 if (expired) {
                     applySwitches(player);
                 }
+                // Landing, and the speed they were carrying on the way down. The game
+                // has no event for it, and by the time it would fire the velocity has
+                // already been absorbed, so both have to be watched for.
+                boolean airborne = !player.isOnGround();
+                if (airborne) {
+                    Vector moving = player.getVelocity();
+                    if (moving.getY() < -0.1) {
+                        holder.falling = moving.clone();
+                    }
+                } else if (holder.wasAirborne) {
+                    landing.add(player);
+                }
+                holder.wasAirborne = airborne;
                 for (Ability ability : holder.abilities) {
                     if (ability.every > 0 && now % ability.every == 0) {
                         List<String> script = ability.scripts.get("every");
@@ -325,6 +404,7 @@ public final class PowerService implements Listener {
             }
         }
         due.forEach(Runnable::run);
+        landing.forEach(who -> fire(who, "on_land"));
         watchFlights();
     }
 
@@ -346,8 +426,10 @@ public final class PowerService implements Listener {
                 return;
             }
             for (Ability ability : holder.abilities) {
-                boolean aims = trigger.equals("on_use") && ability.projectile != null;
-                if (!aims && !ability.scripts.containsKey(trigger)) {
+                boolean native_ = ability.triggers.contains(trigger)
+                        && (ability.projectile != null || ability.beam != null
+                            || ability.impulse != null);
+                if (!native_ && !ability.scripts.containsKey(trigger)) {
                     continue;
                 }
                 String clock = player.getUniqueId() + "\0" + ability.name + "\0" + trigger;
@@ -360,8 +442,15 @@ public final class PowerService implements Listener {
             }
         }
         for (Ability ability : firing) {
-            if (trigger.equals("on_use") && ability.projectile != null) {
+            boolean native_ = ability.triggers.contains(trigger);
+            if (native_ && ability.projectile != null) {
                 launch(player, ability);
+            }
+            if (native_ && ability.beam != null) {
+                shoot(player, ability);
+            }
+            if (native_ && ability.impulse != null) {
+                shove(player, ability);
             }
             List<String> script = ability.scripts.get(trigger);
             if (script != null && !script.isEmpty()) {
@@ -411,6 +500,101 @@ public final class PowerService implements Listener {
         if (ability.scripts.containsKey("on_hit")) {
             inFlight.put(thrown.getUniqueId(),
                     new Flying(player.getUniqueId(), ability.name, Bukkit.getCurrentTick()));
+        }
+    }
+
+    /**
+     * A beam: instant, straight, and as long as it was asked to be.
+     *
+     * <p>Written as commands this comes out badly, and did. A model drawing a laser writes
+     * a run of {@code particle} calls at {@code ^ ^ ^1}, {@code ^ ^ ^2} and so on, which
+     * stops wherever the list stops rather than where the beam hits, passes straight
+     * through walls, and takes a tick to draw. Asked for hitscan it produced something
+     * short and janky, and its damage landed on whatever was nearest, including the person
+     * holding it.
+     *
+     * <p>A trace answers all of that at once: it stops at the first block, it hits the
+     * first entity along the line and nothing else, and the shooter is not in the line
+     * because the trace starts in front of their eyes.
+     */
+    private void shoot(Player player, Ability ability) {
+        Location eye = player.getEyeLocation();
+        Vector aim = eye.getDirection().normalize();
+        RayTraceResult hit = player.getWorld().rayTrace(
+                eye, aim, ability.range, FluidCollisionMode.NEVER, true, 0.3,
+                // Never the shooter. Their own hitbox surrounds the muzzle, so a trace that
+                // does not exclude them shoots them in the face at zero range, which is
+                // exactly what was happening.
+                entity -> !entity.equals(player) && !entity.isDead());
+        double reach = hit == null ? ability.range
+                : hit.getHitPosition().distance(eye.toVector());
+        Location end = eye.clone().add(aim.clone().multiply(reach));
+
+        Particle particle = particle(ability.beam);
+        if (particle != null) {
+            // Drawn in the server's own particle call rather than a command per step: one
+            // packet per point, all inside this tick, so the beam appears at once.
+            for (double along = 0.6; along < reach; along += 0.5) {
+                Location point = eye.clone().add(aim.clone().multiply(along));
+                player.getWorld().spawnParticle(particle, point, 1, 0, 0, 0, 0);
+            }
+        }
+        if (hit != null && hit.getHitEntity() instanceof LivingEntity struck
+                && ability.damage > 0) {
+            struck.damage(ability.damage, player);
+        }
+        List<String> script = ability.scripts.get("on_hit");
+        if (script != null && !script.isEmpty()) {
+            runner.submitAt(script, end);
+        }
+    }
+
+    /**
+     * Moves the player, which no command can do.
+     *
+     * <p>{@code tp} puts somebody somewhere; it cannot give them momentum, and a request to
+     * be bouncy or to be flung is entirely about momentum. Velocity on a player is a
+     * suggestion the client may argue with, but for a shove it is what the game itself uses
+     * for knockback and it holds.
+     */
+    private void shove(Player player, Ability ability) {
+        Held holder = held.get(player.getUniqueId());
+        Vector push = switch (ability.impulse) {
+            case "look" -> player.getEyeLocation().getDirection().normalize()
+                    .multiply(ability.power);
+            case "up" -> new Vector(0, ability.power, 0);
+            case "back" -> player.getEyeLocation().getDirection().normalize()
+                    .multiply(-ability.power);
+            case "bounce" -> {
+                // The speed they arrived at, sent back the way it came. Read from the last
+                // airborne sample, because the landing has already absorbed it.
+                Vector arrived = holder == null ? new Vector() : holder.falling.clone();
+                yield new Vector(arrived.getX(), Math.abs(arrived.getY()) * ability.power,
+                        arrived.getZ());
+            }
+            case "stop" -> new Vector();
+            default -> null;
+        };
+        if (push == null) {
+            return;
+        }
+        // A shove that would fling somebody out of the world helps nobody.
+        if (push.lengthSquared() > 100) {
+            push.normalize().multiply(10);
+        }
+        player.setVelocity(ability.impulse.equals("bounce") || ability.impulse.equals("stop")
+                ? push : player.getVelocity().add(push));
+    }
+
+    private static Particle particle(String name) {
+        if (name == null) {
+            return null;
+        }
+        try {
+            return Particle.valueOf(name.toUpperCase(Locale.ROOT).trim()
+                    .replace("MINECRAFT:", "").replace(' ', '_'));
+        } catch (IllegalArgumentException missing) {
+            return Particle.FLAME;
         }
     }
 

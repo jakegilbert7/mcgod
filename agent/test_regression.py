@@ -4737,7 +4737,7 @@ class TheGodMayAct(unittest.TestCase):
         a list. A power is now a trigger plus commands plus a few switches, so a web
         shooter and a wake of ice are writable without anyone having thought of them."""
         from evidence import POWER_TOOL
-        from scan import SWITCHES, TRIGGERS
+        from scan import IMPULSES, SWITCHES, TRIGGERS
 
         java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
         self.assertNotIn("List.of(\"flight\"", java, "no fixed vocabulary of powers")
@@ -4752,9 +4752,11 @@ class TheGodMayAct(unittest.TestCase):
         self.assertNotIn("powers", schema, "there is no list left to choose from")
         # And no drift the other way: a trigger the plugin grew that the model is never
         # told about is a capability nobody can reach.
-        declared = java[java.index("List<String> TRIGGERS = List.of("):]
-        self.assertEqual(sorted(re.findall(r'"(\w+)"', declared[:declared.index(";")])),
-                         sorted(TRIGGERS))
+        for constant, mirror in (("TRIGGERS", TRIGGERS), ("IMPULSES", IMPULSES)):
+            declared = java[java.index(f"List<String> {constant} = List.of("):]
+            self.assertEqual(
+                sorted(re.findall(r'"(\w+)"', declared[:declared.index(";")])),
+                sorted(mirror), f"{constant} drifted between the plugin and the agent")
 
     def test_a_power_fires_when_you_click_at_nothing(self):
         """Right-clicking air with an empty hand sends the server no packet at all: the
@@ -4901,6 +4903,96 @@ class TheGodMayAct(unittest.TestCase):
         self.assertIn('"execute in " + at.getWorld().getKey() + " positioned "', runner)
         self.assertIn("where.clone()", runner,
                       "the thing that landed may be gone before the command runs")
+
+    def test_a_builders_own_answer_size_is_honoured(self):
+        """Every build failed, and it read as a timeout. The builder asked for sixteen
+        thousand output tokens and complete_message overwrote that with the dialogue
+        default of four thousand, so a statue's worth of setblock commands hit the ceiling
+        on both attempts and raised."""
+        import inspect
+
+        import evidence
+        from builder import BUILD_TIMEOUT_SECONDS, MAX_BUILD_TOKENS
+
+        source = inspect.getsource(evidence.complete_message)
+        self.assertIn('request.pop("max_tokens", 0)', source,
+                      "a caller that asks for a bigger answer must get one")
+        self.assertIn("timeout", inspect.signature(evidence.complete_message).parameters)
+        self.assertGreater(MAX_BUILD_TOKENS, evidence.MODEL_RETRY_TOKENS)
+        # And the loop around it must not cut off a build it is waiting for.
+        import god
+        self.assertGreater(god.ACT_BUDGET_SECONDS, BUILD_TIMEOUT_SECONDS)
+
+    def test_the_builder_is_given_the_ground_not_a_picture(self):
+        """It was told what to build and one anchor point, which is not enough to put a
+        thing down. On a slope that sets one foot in the air and buries the other."""
+        import builder
+
+        voxels = {}
+        for x in range(-8, 9):
+            for z in range(-8, 9):
+                ground = 64 + (x // 4)
+                voxels[(x, ground, z)] = "minecraft:grass_block[snowy=false]"
+                voxels[(x, ground + 1, z)] = "minecraft:short_grass"
+        voxels[(0, 70, 0)] = "minecraft:oak_leaves[distance=1]"
+        site = builder.survey(voxels, [0, 64, 0], radius=4)
+
+        rows = site["height_offsets_from_anchor_y"]
+        self.assertEqual(len(rows), 9)
+        # Grass and leaves are not ground. Reading grass_block as vegetation reported the
+        # whole site as empty air, which is worse than no survey at all.
+        self.assertNotIn("~", "".join(rows))
+        self.assertIn("grass_block", site["surface_legend"].values())
+        self.assertNotIn("oak_leaves", site["surface_legend"].values())
+        # The slope has to be visible, or there was no point measuring it.
+        self.assertIn("-1", rows[0])
+        self.assertIn("+1", rows[0])
+        self.assertEqual(site["corner_north_west"], [-4, -4])
+
+    def test_the_survey_is_grids_and_never_a_block_array(self):
+        """Non-negotiable: the model never receives raw voxels. Character grids with a
+        legend carry the same information in a form it can actually read."""
+        import inspect
+
+        import builder
+
+        source = inspect.getsource(builder.survey)
+        self.assertIn("legend", source)
+        self.assertNotIn("json.dumps(voxels", source)
+        site = builder.survey({(0, 64, 0): "minecraft:stone"}, [0, 64, 0], radius=1)
+        self.assertTrue(all(isinstance(row, str)
+                            for row in site["height_offsets_from_anchor_y"]),
+                        "rows are text a model can read, not nested coordinates")
+        self.assertTrue(all(isinstance(row, str) for row in site["surface"]))
+
+    def test_a_beam_is_traced_and_never_hits_its_own_shooter(self):
+        """Written as commands a laser comes out as a run of particle calls: it stops
+        where the list stops rather than where it hits, passes through walls, and its
+        damage lands on whoever is nearest, which was sometimes the player holding it."""
+        java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
+        self.assertIn("rayTrace(", java)
+        self.assertIn("!entity.equals(player)", java,
+                      "the shooter's own hitbox surrounds the muzzle")
+        self.assertIn("ability.range", java)
+        from evidence import POWER_TOOL
+        self.assertIn("HITSCAN", POWER_TOOL["description"])
+        self.assertIn("beam", POWER_TOOL["input_schema"]["properties"])
+
+    def test_a_power_can_move_the_player(self):
+        """Asked to be bouncy it failed: tp puts somebody somewhere, and being bouncy is
+        entirely about momentum, which no command can give."""
+        from evidence import POWER_TOOL
+        from scan import IMPULSES, TRIGGERS
+
+        java = (self.JAVA.parent / "PowerService.java").read_text(encoding="utf-8")
+        self.assertIn("on_land", TRIGGERS)
+        self.assertIn("bounce", IMPULSES)
+        self.assertIn("player.setVelocity(", java)
+        self.assertIn("holder.falling", java,
+                      "a landing has already absorbed the velocity; the last airborne "
+                      "reading is the speed they actually arrived at")
+        self.assertIn("impulse", POWER_TOOL["input_schema"]["properties"])
+        self.assertIn("bounce", POWER_TOOL["description"])
 
     def test_building_a_shape_is_asked_of_a_builder(self):
         """A dialogue model asked for a humanoid statue produced something nobody would
