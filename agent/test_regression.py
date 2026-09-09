@@ -4994,6 +4994,63 @@ class TheGodMayAct(unittest.TestCase):
         self.assertIn("impulse", POWER_TOOL["input_schema"]["properties"])
         self.assertIn("bounce", POWER_TOOL["description"])
 
+    def test_what_stands_nearby_survives_json(self):
+        """Four builds failed in a row reporting "the builder did not answer (TypeError)".
+        Nothing was wrong with the builder: structure_name returns the whole belief row,
+        the label lives in its object column, and a sqlite3.Row does not serialise."""
+        import json
+
+        store = Store(":memory:")
+        try:
+            store.put("structures", {
+                "id": "s_1", "dim": "overworld", "min_x": 0, "min_y": 64, "min_z": 0,
+                "max_x": 4, "max_y": 68, "max_z": 4},
+                Belief(provenance=Provenance.SCANNED, confidence=1.0))
+            store.name_structure("s_1", "gold block wall", 0.9, "because", 1, "k",
+                                 category="other", description="A long wall of gold.")
+            named = store.structure_name("s_1")
+            self.assertIsNotNone(named)
+            # The name is the object; the value is an envelope that is not a name.
+            self.assertEqual(named["object"], "gold block wall")
+            body = json.loads(named["value"])
+            self.assertEqual(body["description"], "A long wall of gold.")
+            json.dumps({"name": named["object"], "description": body["description"]})
+        finally:
+            store.close()
+
+    def test_the_survey_read_fits_what_the_server_allows(self):
+        """The server refuses a voxel read taller than 48 and the survey asked for 49, so
+        every build fell back to blind. The refusal was swallowed, so the log said "blind"
+        and never said why."""
+        import inspect
+
+        import god
+
+        java = (self.JAVA.parent / "ScanService.java").read_text(encoding="utf-8")
+        cap = int(re.search(r"MAX_VOXEL_HEIGHT = (\d+)", java).group(1))
+        source = inspect.getsource(god.God.design_build)
+        span = int(re.search(r"lo\[1\] \+ (\d+)", source).group(1)) + 1
+        self.assertLessEqual(span, cap,
+                             "the survey must ask for a box the server will actually read")
+        self.assertIn("could not survey the site:", source,
+                      "a refused read must say why rather than silently building blind")
+
+    def test_a_failed_tool_is_reported_not_swallowed_by_the_guard(self):
+        """Asked for a castle and given none, the player was told "I cannot ground that
+        answer reliably enough to give it" — a sentence about our own machinery that
+        tells them nothing about what went wrong."""
+        import inspect
+
+        import god
+
+        source = inspect.getsource(god.God.on_chat)
+        self.assertIn('acted["failures"].append', source,
+                      "a builder that returns nothing is a failure worth saying aloud")
+        self.assertIn('elif speech_refused and acted["failures"]:', source)
+        self.assertLess(source.index('elif speech_refused and acted["failures"]:'),
+                        source.index('elif acted["failures"]:'),
+                        "the refused-speech case must be tested before the general one")
+
     def test_building_a_shape_is_asked_of_a_builder(self):
         """A dialogue model asked for a humanoid statue produced something nobody would
         recognise. Shape is a different skill from conversation."""

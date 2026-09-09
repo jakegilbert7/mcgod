@@ -204,7 +204,9 @@ async def design(what: str, anchor, facing: str = "", materials: str = "",
             max_tokens=MAX_BUILD_TOKENS, timeout=BUILD_TIMEOUT_SECONDS,
             messages=[{"role": "user", "content": json.dumps(request, indent=1)}])
     except Exception as error:  # noqa: BLE001 - a builder failure is not a world failure
-        return {"error": f"the builder did not answer ({type(error).__name__})"}
+        # With the class alone this read as a provider problem for four retries, while the
+        # real cause was a value in our own request that would not serialise.
+        return {"error": f"the builder did not answer ({type(error).__name__}: {error})"}
     text = _plain(reply)
     try:
         body = json.loads(text[text.find("{"):text.rfind("}") + 1])

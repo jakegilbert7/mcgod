@@ -2463,6 +2463,13 @@ thinking=thinking_for(VISION_MODEL),
                 for block in tool_uses:
                     if block.name == "design_build":
                         result = await self.design_build(block.input or {}, actor)
+                        if result.get("error"):
+                            # A tool that failed is something the player has to be told.
+                            # Without this the exchange ended on the grounding guard's
+                            # message, which describes our own machinery rather than what
+                            # went wrong, and the player learned nothing.
+                            acted["failures"].append(
+                                "the builder gave me nothing to work with")
                     elif block.name == "grant_power":
                         result = await self.grant_powers(block.input or {}, actor)
                     elif block.name == "act_on_world":
@@ -2578,6 +2585,12 @@ thinking=thinking_for(VISION_MODEL),
             # leave them holding diamonds beside a sentence saying nothing could be said.
             self.log(f"{DIM}the draft was refused but the act stands; reporting it{RESET}")
             said = self.report_of(acted)
+        elif speech_refused and acted["failures"]:
+            # Refused prose plus a real failure: say the failure. The guard's own sentence
+            # describes our machinery, and a player who asked for a castle and got
+            # "I cannot ground that answer" has been told nothing they can use.
+            self.log(f"{DIM}the draft was refused; reporting the failure instead{RESET}")
+            said = "That I could not do: " + acted["failures"][0].rstrip(".") + "."
         elif acted["failures"]:
             said = ((said + " ") if said else "") + ("Part of it I could not do: "
                                                     + acted["failures"][0].rstrip(".") + ".")
@@ -2714,15 +2727,21 @@ thinking=thinking_for(VISION_MODEL),
 
         site, standing = None, []
         try:
+            # The server refuses a voxel read taller than 48, and asking for 24 either side
+            # of the anchor is 49. That one block put every build back to blind, and the
+            # refusal was swallowed, so the log said "blind" and never said why.
             lo = [anchor[0] - SITE_RADIUS, max(-64, anchor[1] - 24),
                   anchor[2] - SITE_RADIUS]
-            hi = [anchor[0] + SITE_RADIUS, anchor[1] + 24, anchor[2] + SITE_RADIUS]
+            hi = [anchor[0] + SITE_RADIUS, lo[1] + 47, anchor[2] + SITE_RADIUS]
             read = await request_voxels(URL, dim, lo, hi)
             if read.get("ok"):
                 site = survey(to_voxels(read), anchor)
+            else:
+                self.log(f"{YELLOW}could not survey the site: "
+                         f"{read.get('error')}; building blind{RESET}")
         except Exception as error:  # noqa: BLE001 - a blind build beats no build
             self.log(f"{YELLOW}could not survey the site "
-                     f"({type(error).__name__}); building blind{RESET}")
+                     f"({type(error).__name__}: {error}); building blind{RESET}")
         try:
             from grounding import box_of, current, current_generated
             for row in list(current(self.store, dim)) + list(
@@ -2736,9 +2755,26 @@ thinking=thinking_for(VISION_MODEL),
                         and hi_b[0] >= anchor[0] - SITE_RADIUS
                         and lo_b[2] <= anchor[2] + SITE_RADIUS
                         and hi_b[2] >= anchor[2] - SITE_RADIUS):
-                    standing.append({
-                        "name": self.store.structure_name(row["id"]) or "unnamed",
-                        "from": list(lo_b), "to": list(hi_b)})
+                    # structure_name returns the whole belief row, not a string, and a
+                    # sqlite3.Row does not serialise. That raised a TypeError from inside
+                    # json.dumps which surfaced as "the builder did not answer", so four
+                    # retries chased a provider that was never the problem. The label is
+                    # the row's object; its value holds the description.
+                    named = self.store.structure_name(row["id"])
+                    label, about = "unnamed", ""
+                    if named:
+                        label = str(named["object"] or "unnamed")
+                        try:
+                            about = str(json.loads(named["value"] or "{}")
+                                        .get("description") or "")
+                        except (ValueError, TypeError):
+                            about = ""
+                    here = {"name": label,
+                            "from": [int(v) for v in lo_b],
+                            "to": [int(v) for v in hi_b]}
+                    if about:
+                        here["description"] = about
+                    standing.append(here)
         except Exception as error:  # noqa: BLE001
             self.log(f"{YELLOW}could not list what stands here "
                      f"({type(error).__name__}){RESET}")

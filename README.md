@@ -172,7 +172,7 @@ Java rather than as data.
 | `render.py` `assets.py` `entity_models.py` `render_structures.py` | the renderer and its inputs |
 | `scan.py` `bridge.py` `consumer.py` `replay.py` | the wire: RPC, live stream, replay harness |
 | `model_api.py` `config.py` | provider boundary for Anthropic and OpenRouter |
-| `test_regression.py` | 307 offline tests |
+| `test_regression.py` | 310 offline tests |
 | `cubiomes/` | vendored cubiomes, patched to 26.2 — see its `PROVENANCE.md` |
 
 Also `classify.py`, `eval_segment.py`, `compare_models.py`, `survey.py`, `summary.py`,
@@ -204,7 +204,7 @@ vision, build and segmentation roles are separate variables so each can be swapp
 measured on its own.
 
 ```bash
-.venv/bin/python test_regression.py    # 265 offline tests; no server, no API key
+.venv/bin/python test_regression.py    # 268 offline tests; no server, no API key
 .venv/bin/python seedmap.py --count village --at 300 -300 --radius 10000
 .venv/bin/python masses.py --audit
 .venv/bin/python render_structures.py --check
@@ -212,9 +212,9 @@ measured on its own.
 
 ### The corpus
 
-Forty-two of the 307 tests replay recorded sessions, and those recordings are not in this
+Forty-two of the 310 tests replay recorded sessions, and those recordings are not in this
 repository: a session file is a play-by-play of somebody's game with their player UUID on
-every line. Without one those tests skip and the other 265 run. Play with the plugin
+every line. Without one those tests skip and the other 268 run. Play with the plugin
 installed, then copy a file from `server/plugins/McGod/events/` into
 `agent/sessions/corpus/`, and the whole suite runs against your own world.
 
